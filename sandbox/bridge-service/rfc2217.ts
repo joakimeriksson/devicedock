@@ -175,6 +175,25 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
     sendCmd(WILL, SGA);
     sendCmd(DO, SGA);
 
+    // DTR and RTS must reach the port in ONE operation. esptool enters the bootloader by changing both
+    // back to back, and a board's auto-reset circuit treats "both on" as neutral, so even a short gap
+    // (each bridge operation takes tens of ms) lets the chip boot normally instead of into download mode.
+    // So changes are merged over a few ms and applied together.
+    let signalTimer: ReturnType<typeof setTimeout> | undefined;
+    const flushSignals = () => {
+      if (!signalTimer) return Promise.resolve();
+      clearTimeout(signalTimer);
+      signalTimer = undefined;
+      return op("serial.signals", { dataTerminalReady: signals.dtr, requestToSend: signals.rts }).catch((e) => {
+        log(`rfc2217: signals failed: ${(e as Error).message}`);
+        end();
+      });
+    };
+    const scheduleSignals = () => {
+      if (signalTimer) clearTimeout(signalTimer);
+      signalTimer = setTimeout(() => void flushSignals(), 4);
+    };
+
     const handleSub = async (p: Buffer) => {
       if (p[0] !== COMPORT) return;
       const code = p[1];
@@ -202,14 +221,11 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
           break;
         case SET_CONTROL: {
           const c = v[0];
-          if (c === 8 || c === 9) {
-            signals.dtr = c === 8;
-            await op("serial.signals", { dataTerminalReady: signals.dtr });
-            reply(code, c);
-          } else if (c === 11 || c === 12) {
-            signals.rts = c === 11;
-            await op("serial.signals", { requestToSend: signals.rts });
-            reply(code, c);
+          if (c === 8 || c === 9 || c === 11 || c === 12) {
+            if (c === 8 || c === 9) signals.dtr = c === 8;
+            else signals.rts = c === 11;
+            scheduleSignals();
+            reply(code, c); // acknowledge now; the line change is applied atomically a moment later
           } else if (c === 5 || c === 6) {
             await op("serial.signals", { break: c === 5 });
             reply(code, c);
@@ -278,6 +294,7 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
     const parser = new TelnetParser();
     let lastActivity = Date.now();
     const writeOut = (bytes: Buffer) => {
+      void flushSignals();
       for (let i = 0; i < bytes.length; i += WRITE_CHUNK)
         void op("serial.write", { data: bytes.subarray(i, i + WRITE_CHUNK).toString("base64") }).catch((e) => {
           log(`rfc2217: write failed: ${(e as Error).message}`);
