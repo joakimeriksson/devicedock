@@ -36,6 +36,17 @@ export function Terminal({
     term.loadAddon(fit);
     term.open(element.current!);
     fit.fit();
+    // Fonts load after mount; refit once metrics are final so the last rows are not clipped.
+    const refit = () => {
+      if (disposed) return;
+      fit.fit();
+      if (ws?.readyState === 1)
+        ws.send(
+          JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }),
+        );
+    };
+    void document.fonts?.ready.then(refit);
+    requestAnimationFrame(refit);
     let ws: WebSocket,
       disposed = false,
       exited = false,

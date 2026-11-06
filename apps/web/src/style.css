@@ -193,7 +193,9 @@ aside {
   margin-left: 8px;
 }
 .terminal-body {
-  height: 300px;
+  box-sizing: border-box;
+  height: clamp(340px, 56vh, 620px);
+  overflow: hidden;
   padding: 10px 5px 6px 12px;
   background: #0c131b;
 }
@@ -427,7 +429,7 @@ footer {
     display: none;
   }
   .terminal-body {
-    height: 280px;
+    height: clamp(300px, 50vh, 520px);
   }
 }
 @media (prefers-reduced-motion: reduce) {
