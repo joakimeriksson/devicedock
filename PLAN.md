@@ -1,5 +1,11 @@
 # Implementation plan: Browser USB Bridge for Coding Agents
 
+## Owner decision — autonomous hardware loop (2026-11-06)
+
+The owner explicitly chose an RFC 2217 serial server plus a time-boxed **autonomous mode** over the
+plan-conformant flash tool. This overrides rule 10 and the per-write approval rule for devices where the
+browser owner enabled autonomy. Details and limits: SECURITY.md. Real-ESP32 verification is pending.
+
 ## Current status — 2026-11-06
 
 Implementation is in progress in this project. The user installed dependencies, built the first Docker image, and started the managed sandbox. The local web app serves HTTP 200. Typecheck and frontend build pass; 14 unit/in-process tests pass. Browser terminal startup has failed and is being debugged. Physical hardware has not been tested.

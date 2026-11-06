@@ -145,3 +145,20 @@ To deliberately erase stored agent credentials and the container home, first rem
 - **WebUSB/WebHID:** future transport-specific adapters. Raw USB transfers and HID reports require separate schemas and are not treated as serial.
 
 See [SECURITY.md](SECURITY.md) for threat boundaries and [PLAN.md](PLAN.md) for the original acceptance criteria.
+
+## Autonomous hardware loop (esptool, PlatformIO, pyserial)
+
+Linux tools in the sandbox reach the shared device through an RFC 2217 serial server at
+`rfc2217://127.0.0.1:2217` (loopback inside the container; not a device file and not mounted). Baud rate
+and DTR/RTS are forwarded, so esptool can reset into the bootloader and flash:
+
+```sh
+esptool --port rfc2217://127.0.0.1:2217 --chip esp32 chip-id
+esptool --port rfc2217://127.0.0.1:2217 --chip esp32 write-flash 0x10000 build/firmware.bin
+```
+
+Workflow: *Add serial port* → *Open & share* → turn on **Autonomous** (15/60 min) → the agent builds,
+flashes and reads output on its own. Without autonomous mode every write waits for your approval click.
+One client holds the device at a time (exclusive lease). `AGENTS.md` / `CLAUDE.md` in `/workspace` tell the
+agents this. Safety trade-offs: see SECURITY.md. Verified with real pyserial and esptool 5.6 against a
+simulated device (`tests/rfc2217/run.sh`); **not yet verified on a real ESP32**.

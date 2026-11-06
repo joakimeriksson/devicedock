@@ -29,3 +29,22 @@ The Mac PTY layer uses fixed argument arrays. Browser input is never interpolate
 ## Remaining assurance work
 
 This initial implementation has not completed a clean install, full typecheck, HTTP/WebSocket runtime checks, Docker execution, browser QA, or physical-device QA in the restricted task environment. Do not treat unit-test success as a production security audit. Finish the checks in VERIFICATION.md before using real hardware. Credential backups, multi-user support, TLS beyond loopback, and adversarial resource-exhaustion testing are outside this MVP.
+
+## Autonomous mode and the RFC 2217 port (deliberate deviation from the MVP rules)
+
+The MVP plan required human approval for every agent-originated physical write and rejected firmware
+flashing as ordinary serial access (PLAN.md rule 10, section 10). For the hardware-in-the-loop hackathon
+workflow the owner chose to relax this, explicitly and with limits:
+
+- **Opt-in per device, per session.** Sharing a device never enables it. The browser owner turns on
+  *Autonomous* for 15 or 60 minutes (hard cap 2 hours, enforced by the broker). While it is on, agent
+  operations on that device skip the approval dialog. It ends at expiry, on *Turn off*, on *Revoke access*,
+  on unplug/reconnect, or when the browser tab closes. Only the browser that owns the device can change it.
+- **Same bridge, same limits.** Leases, generations, payload and rate limits, and the exclusive lease are
+  unchanged. The container still has no device node and no host access.
+- **RFC 2217 server (`127.0.0.1:2217` inside the container only).** It is not published to the Mac.
+  esptool, pyserial and PlatformIO use it, which makes automatic bootloader entry and flashing possible.
+  Because arbitrary serial bytes cannot be classified, the bridge cannot tell flashing from other writes;
+  autonomous mode therefore means the agent may flash the shared board. Do not enable it for a board with
+  hardware attached that must not be disturbed.
+- Approval is still the default and is still required whenever autonomous mode is off or expired.
