@@ -25,6 +25,8 @@ export function createApp({
   bootstrap = randomBytes(32).toString("hex"),
   test = false,
 } = {}) {
+  // Cookies are not isolated by port, so another local instance would overwrite a shared name.
+  const cookieName = `dock_${port}`;
   const origin = `http://127.0.0.1:${port}`,
     host = `127.0.0.1:${port}`;
   const app = express(),
@@ -51,8 +53,8 @@ export function createApp({
   const session = (cookie?: string) => {
     const key = cookie
       ?.split("; ")
-      .find((v) => v.startsWith("dock="))
-      ?.slice(5);
+      .find((v) => v.startsWith(cookieName + "="))
+      ?.slice(cookieName.length + 1);
     const s = sessions.get(key ?? "");
     return s && s.expires > Date.now() ? s : undefined;
   };
@@ -73,7 +75,7 @@ export function createApp({
     sessions.set(key, { csrf, expires: Date.now() + 12 * 60 * 60 * 1000 });
     res.setHeader(
       "Set-Cookie",
-      `dock=${key}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`,
+      `${cookieName}=${key}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`,
     );
     res.json({ csrf });
   });
