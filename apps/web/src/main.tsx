@@ -33,6 +33,22 @@ type Rpc = {
   deadline: number;
   args: Record<string, unknown>;
 };
+// Serial ports the owner chose to keep sharing across restarts (USB id -> baud). Autonomous mode is
+// never remembered. Per-browser convenience only, so failures to read/write storage are ignored.
+const REMEMBER_KEY = "devicedock.autoshare";
+function loadRemembered(): Record<string, number> {
+  try {
+    const v = JSON.parse(localStorage.getItem(REMEMBER_KEY) ?? "{}");
+    return v && typeof v === "object" ? v : {};
+  } catch {
+    return {};
+  }
+}
+function saveRemembered(m: Record<string, number>) {
+  try {
+    localStorage.setItem(REMEMBER_KEY, JSON.stringify(m));
+  } catch {}
+}
 const mock = new MockAdapter(),
   serial = new WebSerialAdapter();
 function App() {
@@ -51,7 +67,16 @@ function App() {
     [latency, setLatency] = useState(20),
     [fail, setFail] = useState(false),
     [agent, setAgent] = useState<Exclude<TerminalKind, "shell">>("codex"),
-    [now, setNow] = useState(Date.now());
+    [now, setNow] = useState(Date.now()),
+    [remembered, setRememberedState] = useState(loadRemembered);
+  const rememberedRef = useRef(remembered),
+    autoShareRef = useRef<() => Promise<void>>(async () => {}),
+    autoSharing = useRef(false);
+  function setRemembered(next: Record<string, number>) {
+    rememberedRef.current = next;
+    setRememberedState(next);
+    saveRemembered(next);
+  }
   const socket = useRef<WebSocket | null>(null),
     rowsRef = useRef<Row[]>([]),
     pending = useRef(
@@ -132,6 +157,12 @@ function App() {
     }
   }
   useEffect(() => {
+    // A remembered board that is plugged back in is shared again without a click.
+    const onConnect = () => void autoShareRef.current();
+    navigator.serial?.addEventListener("connect", onConnect);
+    return () => navigator.serial?.removeEventListener("connect", onConnect);
+  }, []);
+  useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
@@ -169,7 +200,10 @@ function App() {
     function connect() {
       ws = new WebSocket(`ws://${location.host}/ws/devices`, ["dock", csrf]);
       socket.current = ws;
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => {
+        setConnected(true);
+        void autoShareRef.current();
+      };
       ws.onclose = () => {
         setConnected(false);
         setApprovals([]);
@@ -258,6 +292,31 @@ function App() {
     );
     return () => clearInterval(t);
   }, []);
+  async function autoShare() {
+    const mem = rememberedRef.current;
+    if (!("serial" in navigator) || !Object.keys(mem).length) return;
+    if (autoSharing.current) return;
+    autoSharing.current = true;
+    try {
+      for (const d of await serial.listGranted()) await add(serial, d);
+      for (const name of Object.keys(mem)) {
+        const same = rowsRef.current.filter(
+          (r) => r.kind === "serial" && r.name === name,
+        );
+        // A re-plugged board leaves a dead earlier row; only the newest one can be opened.
+        const row = same.at(-1);
+        if (!row || same.some((r) => r.exposed)) continue;
+        try {
+          await expose(row, { baudRate: mem[name] });
+        } catch (e) {
+          setError(`Auto-share of ${name} failed: ${(e as Error).message}`);
+        }
+      }
+    } finally {
+      autoSharing.current = false;
+    }
+  }
+  autoShareRef.current = autoShare;
   async function add(adapter: DeviceAdapter, descriptor?: Descriptor) {
     const d = descriptor ?? (await adapter.requestDevice());
     if (rowsRef.current.some((r) => r.id === d.id)) return;
@@ -301,21 +360,27 @@ function App() {
     });
     update((old) => [...old, row]);
   }
-  async function expose(row: Row) {
+  async function expose(row: Row, auto?: { baudRate: number }) {
     if (
+      !auto &&
       row.kind === "serial" &&
       !window.confirm(
-        "Sharing lets container programs request arbitrary serial bytes, which may change hardware state. Each agent operation will require your approval. Open and share this port?",
+        "Sharing lets container programs request arbitrary serial bytes, which may change hardware state. Each agent operation will require your approval. It will be shared again automatically after restarts (untick “Auto-share next time” to stop). Open and share this port?",
       )
     )
       return;
-    await row.adapter.open(row.id, serialOptions.parse({ baudRate: baud }));
+    const useBaud = auto?.baudRate ?? baud;
+    // An already-open port is kept open: reopening can reset the attached board.
+    if (!row.open)
+      await row.adapter.open(row.id, serialOptions.parse({ baudRate: useBaud }));
+    if (row.kind === "serial" && !auto)
+      setRemembered({ ...rememberedRef.current, [row.name]: useBaud });
     const next = {
       ...row,
       open: true,
       exposed: true,
       generation: row.generation + 1,
-      baudRate: baud,
+      baudRate: row.open ? row.baudRate : useBaud,
     };
     update((old) => old.map((r) => (r.id === row.id ? next : r)));
     send({
@@ -347,6 +412,10 @@ function App() {
     );
   }
   function revoke(row: Row) {
+    if (row.name in rememberedRef.current) {
+      const { [row.name]: _drop, ...rest } = rememberedRef.current;
+      setRemembered(rest);
+    }
     send({ type: "revoke", deviceId: row.id });
     update((old) =>
       old.map((r) =>
@@ -535,6 +604,23 @@ function App() {
                       </button>
                     )}
                   </div>
+                  {row.kind === "serial" && (
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={row.name in remembered}
+                        onChange={(e) => {
+                          const { [row.name]: _drop, ...rest } = remembered;
+                          setRemembered(
+                            e.target.checked
+                              ? { ...rest, [row.name]: row.baudRate }
+                              : rest,
+                          );
+                        }}
+                      />{" "}
+                      Auto-share next time
+                    </label>
+                  )}
                   {row.exposed && (
                     <div className="autonomy">
                       {row.autonomousUntil && row.autonomousUntil > now ? (
