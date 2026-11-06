@@ -136,17 +136,27 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
       chain = p.catch(() => {});
       return p;
     };
-    const op = (name: string, args: Record<string, unknown> = {}) =>
-      enqueue(() => api.call(name, device, args, lease));
-
-    // Current line settings; only reconfigure the port when something really changes, because
-    // reopening a USB serial port can reset the attached board.
+    // Line settings. SET_* requests only update `cfg`; the port is reconfigured lazily, right before
+    // the next real operation, and only if the final value differs from what is applied. Clients like
+    // esptool flip the baud rate several times at connect (115200 -> 9600 -> 115200); in the browser a
+    // reconfigure closes and reopens the port, which can reset the attached board, so collapse them.
     const cfg = { baudRate: device.baudRate || 115200, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" };
+    let applied = { ...cfg };
     let signals = { dtr: false, rts: false };
+    const sync = async () => {
+      if (JSON.stringify(cfg) === JSON.stringify(applied)) return;
+      const next = { ...cfg };
+      await api.call("serial.configure", device, { ...next }, lease);
+      applied = next;
+    };
+    const op = (name: string, args: Record<string, unknown> = {}) =>
+      enqueue(async () => {
+        await sync();
+        return api.call(name, device, args, lease);
+      });
     const applyConfig = (next: Partial<typeof cfg>) => {
-      const changed = Object.entries(next).some(([k, v]) => (cfg as Record<string, unknown>)[k] !== v);
       Object.assign(cfg, next);
-      return changed ? op("serial.configure", { ...cfg }) : Promise.resolve();
+      return Promise.resolve();
     };
 
     const send = (b: Buffer) => open && socket.write(b);
