@@ -196,7 +196,7 @@ aside {
   box-sizing: border-box;
   height: clamp(340px, 56vh, 620px);
   overflow: hidden;
-  padding: 10px 5px 6px 12px;
+  padding: 0;
   background: #0c131b;
 }
 .label {
@@ -445,4 +445,9 @@ footer {
   border-radius: 6px;
   padding: 2px 6px;
   font: inherit;
+}
+
+/* FitAddon subtracts the padding of the .xterm element itself, so the padding lives here. */
+.terminal-body .xterm {
+  padding: 10px 5px 6px 12px;
 }
