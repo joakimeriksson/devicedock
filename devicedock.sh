@@ -20,6 +20,14 @@ backend_pid() {
 }
 sandbox_running() { [ "$(docker inspect -f '{{.State.Running}}' $CONTAINER 2>/dev/null || true)" = true ]; }
 
+# An unauthenticated Codex TUI holds its own login server on port 1455 in the
+# container and hijacks the login callback. End it when Codex is not logged in.
+end_stray_codex() {
+  sandbox_running || return 0
+  docker exec $CONTAINER codex login status >/dev/null 2>&1 && return 0
+  docker exec $CONTAINER sh -c 'for p in /proc/[0-9]*; do case "$(tr "\\0" " " < $p/cmdline 2>/dev/null)" in */bin/codex*) kill ${p#/proc/} 2>/dev/null && echo "Ended unauthenticated codex (pid ${p#/proc/})";; esac; done'
+}
+
 cmd_build() { need_docker; say "Building frontend"; npm run -s build; say "Building sandbox image"; npm run -s sandbox:build; }
 
 cmd_start() {
@@ -27,6 +35,7 @@ cmd_start() {
   docker image inspect $IMAGE >/dev/null 2>&1 || { say "Sandbox image missing, building"; npm run -s sandbox:build; }
   [ -f dist/index.html ] || { say "Building frontend"; npm run -s build; }
   say "Starting sandbox container"; npm run -s sandbox:start
+  end_stray_codex
   if [ -n "$(backend_pid)" ]; then
     say "Backend already running (pid $(backend_pid))"
   else

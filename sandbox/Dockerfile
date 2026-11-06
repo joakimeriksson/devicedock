@@ -1,5 +1,5 @@
 FROM node:22-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends bash git python3 build-essential ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends bash git python3 build-essential ca-certificates procps && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/devicedock
 COPY package*.json ./
 COPY scripts/prepare-pty.mjs ./scripts/prepare-pty.mjs
