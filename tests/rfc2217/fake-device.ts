@@ -2,12 +2,24 @@
 import { startRfc2217, type Api, type Dev } from "../../sandbox/bridge-service/rfc2217.ts";
 const dev: Dev = { id: "11111111-1111-4111-8111-111111111111", generation: 1, name: "fake", kind: "serial", baudRate: 115200 };
 let rx = Buffer.alloc(0);
+// Exclusive lease like the real broker. FAIL_FIRST_RELEASE=1 makes the first release fail ("busy"),
+// which leaves a stale lease behind exactly like a session killed while an approval was pending.
+let leased = false;
+let failRelease = process.env.FAIL_FIRST_RELEASE === "1";
 let pingBuf = "";
 const api: Api = {
   async list() { return [dev]; },
   async call(op, _d, args = {}) {
-    if (op === "serial.acquire") return { lease: "lease" };
-    if (op === "serial.release") return {};
+    if (op === "serial.acquire") {
+      if (leased) throw new Error("Device already leased");
+      leased = true;
+      return { lease: "lease" };
+    }
+    if (op === "serial.release") {
+      if (failRelease) { failRelease = false; throw new Error("Device operation in progress"); }
+      leased = false;
+      return {};
+    }
     if (op === "serial.read") { const d = rx; rx = Buffer.alloc(0); return { data: d.toString("base64") }; }
     if (op === "serial.write") {
       const b = Buffer.from(String(args.data), "base64");

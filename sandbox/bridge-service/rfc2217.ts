@@ -90,15 +90,26 @@ export class TelnetParser {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = console.error): Server {
-  let active = false;
+  // A new connection replaces the previous session instead of being refused: tools such as esptool
+  // reconnect after a failed attempt, and the dead session must not block them.
+  let current: { socket: Socket; done: Promise<void> } | undefined;
+  // Lease this server still holds because its release failed (e.g. the device was busy with a
+  // pending approval). The client id is shared, so a later session may release it itself.
+  let held: { device: Dev; lease: string } | undefined;
+  let queue: Promise<unknown> = Promise.resolve();
   const server = createServer((socket: Socket) => {
-    if (active) {
-      log("rfc2217: rejecting second concurrent connection");
-      socket.destroy();
-      return;
-    }
-    active = true;
-    void session(socket).finally(() => (active = false));
+    queue = queue.then(async () => {
+      if (current) {
+        log("rfc2217: new connection replaces the previous session");
+        current.socket.destroy();
+        await Promise.race([current.done, sleep(5000)]);
+      }
+      const done = session(socket);
+      current = { socket, done };
+      void done.finally(() => {
+        if (current?.socket === socket) current = undefined;
+      });
+    });
   });
 
   async function session(socket: Socket) {
@@ -111,26 +122,12 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
     socket.on("error", end);
     socket.on("close", () => (open = false));
 
-    let dev: Dev | undefined;
+    // The device is attached in the background (below) so the telnet handshake is never delayed.
+    let device!: Dev;
     let lease: string | undefined;
-    try {
-      const devices = await api.list();
-      dev = devices.find((d) => d.kind === "serial") ?? devices[0];
-      if (!dev) {
-        log("rfc2217: no shared device (share one in the browser, then check `device list`)");
-        socket.destroy();
-        return;
-      }
-      lease = ((await api.call("serial.acquire", dev)) as { lease: string }).lease;
-    } catch (e) {
-      log(`rfc2217: cannot attach: ${(e as Error).message}`);
-      socket.destroy();
-      return;
-    }
-    const device = dev;
 
     // Serialise bridge operations: the broker rejects overlapping ops on one lease.
-    let chain: Promise<unknown> = Promise.resolve();
+    let chain: Promise<unknown> = Promise.resolve(); // becomes "after attach" once attach starts
     const enqueue = <T>(fn: () => Promise<T>): Promise<T> => {
       const p = chain.then(fn, fn);
       chain = p.catch(() => {});
@@ -140,7 +137,7 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
     // the next real operation, and only if the final value differs from what is applied. Clients like
     // esptool flip the baud rate several times at connect (115200 -> 9600 -> 115200); in the browser a
     // reconfigure closes and reopens the port, which can reset the attached board, so collapse them.
-    const cfg = { baudRate: device.baudRate || 115200, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" };
+    const cfg = { baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" };
     let applied = { ...cfg };
     let signals = { dtr: false, rts: false };
     const sync = async () => {
@@ -243,6 +240,41 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
       }
     };
 
+    // Attach: pick the shared device and take the exclusive lease. Retry while a previous holder
+    // lets go (our own stale lease is released first; another client's expires within 30 s).
+    const attach = (async () => {
+      const devices = await api.list();
+      const d = devices.find((x) => x.kind === "serial") ?? devices[0];
+      if (!d) throw Error("no shared device (share one in the browser, then check `device list`)");
+      for (let i = 0; i < 70; i++) {
+        if (!open) throw Error("client went away before the device was free");
+        try {
+          lease = ((await api.call("serial.acquire", d)) as { lease: string }).lease;
+          break;
+        } catch (e) {
+          const msg = (e as Error).message;
+          if (!/already leased/i.test(msg) || i === 69) throw e;
+          if (i === 0) log("rfc2217: device is leased; waiting for it to be released");
+          if (held && held.device.id === d.id) {
+            try {
+              await api.call("serial.release", held.device, {}, held.lease);
+              held = undefined;
+              continue;
+            } catch {}
+          }
+          await sleep(500);
+        }
+      }
+      device = d;
+      held = { device: d, lease: lease! };
+      applied.baudRate = d.baudRate || 115200;
+    })();
+    chain = attach.then(() => {}, () => {});
+    attach.catch((e) => {
+      log(`rfc2217: cannot attach: ${(e as Error).message}`);
+      end();
+    });
+
     const parser = new TelnetParser();
     let lastActivity = Date.now();
     const writeOut = (bytes: Buffer) => {
@@ -272,6 +304,7 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
 
     // Reader: poll the lease queue; poll fast while active, slowly when idle.
     try {
+      await attach;
       while (open) {
         const r = (await op("serial.read", { maxBytes: 16384 })) as { data: string };
         if (r.data) {
@@ -285,7 +318,14 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
       log(`rfc2217: read loop ended: ${(e as Error).message}`);
     } finally {
       socket.destroy();
-      await api.call("serial.release", device, {}, lease).catch(() => {});
+      if (lease) {
+        try {
+          await api.call("serial.release", device, {}, lease);
+          if (held?.lease === lease) held = undefined;
+        } catch {
+          // keep `held`: the next session releases it (the broker may still be busy with an operation)
+        }
+      }
     }
   }
 
