@@ -6,6 +6,8 @@ COPY scripts/prepare-pty.mjs ./scripts/prepare-pty.mjs
 RUN npm ci && npm install --prefix /opt/agent @openai/codex@0.167.0 @anthropic-ai/claude-code@2.1.319 opencode-ai@1.19.5
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir esptool pyserial mpremote
 ENV PATH="/opt/venv/bin:$PATH"
+# Login shells (bash -l) reset PATH, so export it from profile.d as well.
+RUN echo 'export PATH="/opt/venv/bin:$PATH"' > /etc/profile.d/devicedock-venv.sh
 COPY packages ./packages
 COPY sandbox ./sandbox
 RUN printf '#!/bin/sh\nexec /opt/devicedock/node_modules/.bin/tsx /opt/devicedock/packages/device-client/cli.ts "$@"\n' > /usr/local/bin/device && chmod +x /usr/local/bin/device && for b in codex claude opencode; do ln -s /opt/agent/node_modules/.bin/$b /usr/local/bin/$b; done && mkdir /workspace && chown node:node /workspace
