@@ -2,12 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+export type TerminalKind = "shell" | "codex" | "claude" | "opencode";
+export const agentLabels: Record<Exclude<TerminalKind, "shell">, string> = {
+  codex: "Codex",
+  claude: "Claude Code",
+  opencode: "OpenCode",
+};
 export function Terminal({
   kind,
   csrf,
+  onKind,
 }: {
-  kind: "shell" | "agent";
+  kind: TerminalKind;
   csrf: string;
+  onKind?: (kind: Exclude<TerminalKind, "shell">) => void;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const [revision, setRevision] = useState(0),
@@ -99,7 +107,23 @@ export function Terminal({
       <header>
         <span>
           <i className="dot" />{" "}
-          {kind === "shell" ? "Linux workspace" : "Codex agent"}{" "}
+          {kind === "shell" ? (
+            "Linux workspace"
+          ) : (
+            <select
+              aria-label="Agent"
+              value={kind}
+              onChange={(e) =>
+                onKind?.(e.target.value as Exclude<TerminalKind, "shell">)
+              }
+            >
+              {Object.entries(agentLabels).map(([k, label]) => (
+                <option key={k} value={k}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          )}{" "}
           <small>{status}</small>
         </span>
         <button onClick={() => setRevision((x) => x + 1)}>Restart</button>

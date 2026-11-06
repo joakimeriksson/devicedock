@@ -1,6 +1,14 @@
 import type * as pty from "node-pty";
 import type WebSocket from "ws";
 import { container, verifyManaged } from "./sandbox.ts";
+export const terminalKinds = ["shell", "codex", "claude", "opencode"] as const;
+export type TerminalKind = (typeof terminalKinds)[number];
+const commands: Record<TerminalKind, string[]> = {
+  shell: ["bash", "-l"],
+  codex: ["codex"],
+  claude: ["claude"],
+  opencode: ["opencode"],
+};
 export class Terminals {
   sessions = new Map<
     string,
@@ -11,7 +19,7 @@ export class Terminals {
       timer?: ReturnType<typeof setTimeout>;
     }
   >();
-  async attach(kind: "shell" | "agent", ws: WebSocket, restart = false) {
+  async attach(kind: TerminalKind, ws: WebSocket, restart = false) {
     const pty = await import("node-pty");
     await verifyManaged();
     if (ws.readyState !== 1) return;
@@ -30,7 +38,7 @@ export class Terminals {
           "-w",
           "/workspace",
           container,
-          ...(kind === "agent" ? ["codex"] : ["bash", "-l"]),
+          ...commands[kind],
         ],
         {
           name: "xterm-256color",

@@ -12,7 +12,7 @@ import {
   type Descriptor,
   type DeviceAdapter,
 } from "./adapters";
-import { Terminal } from "./Terminal";
+import { Terminal, type TerminalKind } from "./Terminal";
 import "./style.css";
 type Row = Descriptor & {
   adapter: DeviceAdapter;
@@ -48,7 +48,8 @@ function App() {
     [hex, setHex] = useState(false),
     [baud, setBaud] = useState(115200),
     [latency, setLatency] = useState(20),
-    [fail, setFail] = useState(false);
+    [fail, setFail] = useState(false),
+    [agent, setAgent] = useState<Exclude<TerminalKind, "shell">>("codex");
   const socket = useRef<WebSocket | null>(null),
     rowsRef = useRef<Row[]>([]),
     pending = useRef(
@@ -365,7 +366,7 @@ function App() {
             Sandbox <b>{health?.container ? "running" : "not running"}</b>
           </span>
           <span>
-            Agent <b>{health?.agent ? "Codex installed" : "not available"}</b>
+            Agents <b>{health?.agent ? "Codex · Claude · OpenCode" : "not available"}</b>
           </span>
           <span>
             WebSerial{" "}
@@ -394,7 +395,7 @@ function App() {
             {csrf ? (
               <>
                 <Terminal kind="shell" csrf={csrf} />
-                <Terminal kind="agent" csrf={csrf} />
+                <Terminal kind={agent} onKind={setAgent} csrf={csrf} />
               </>
             ) : (
               <div className="panel empty">

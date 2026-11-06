@@ -435,3 +435,12 @@ footer {
     transition: none !important;
   }
 }
+
+.terminal header select {
+  background: #131d28;
+  color: inherit;
+  border: 1px solid #2a3a4a;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font: inherit;
+}

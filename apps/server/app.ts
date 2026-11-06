@@ -6,7 +6,14 @@ import { resolve } from "node:path";
 import { Broker } from "./broker.ts";
 import { browserMessage, request } from "../../packages/protocol/index.ts";
 import { health, getBridgeToken, bridgePort } from "./sandbox.ts";
-import { Terminals } from "./terminals.ts";
+import { Terminals, terminalKinds, type TerminalKind } from "./terminals.ts";
+
+// "/ws/terminal/agent" is kept as an alias for Codex.
+const terminalKind = (url = ""): TerminalKind | undefined => {
+  const m = /^\/ws\/terminal\/([a-z]+)(\?|$)/.exec(url);
+  const name = m?.[1] === "agent" ? "codex" : m?.[1];
+  return terminalKinds.find((k) => k === name);
+};
 export function equal(a: string, b: string) {
   return (
     Buffer.byteLength(a) === Buffer.byteLength(b) &&
@@ -105,11 +112,7 @@ export function createApp({
       socket.destroy();
       return;
     }
-    if (
-      !["/ws/devices", "/ws/terminal/shell", "/ws/terminal/agent"].includes(
-        req.url?.split("?")[0] ?? "",
-      )
-    ) {
+    if (req.url?.split("?")[0] !== "/ws/devices" && !terminalKind(req.url)) {
       socket.destroy();
       return;
     }
@@ -121,7 +124,7 @@ export function createApp({
     if (req.url?.startsWith("/ws/terminal/")) {
       try {
         await terminals.attach(
-          req.url.includes("/agent") ? "agent" : "shell",
+          terminalKind(req.url)!,
           ws,
           req.url.endsWith("?restart=1"),
         );
