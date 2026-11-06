@@ -3,6 +3,7 @@ import {
   request,
   MAX_BUFFER,
   MAX_PENDING,
+  MAX_AUTONOMY_MS,
   type Request,
   type DeviceDescriptor,
 } from "../../packages/protocol/index.ts";
@@ -37,6 +38,7 @@ export class Broker {
   expose(owner: string, send: Send, info: DeviceDescriptor) {
     if (info.kind === "serial" && info.autoApprove)
       throw Error("Physical devices require approval");
+    if (info.autonomousUntil) this.checkAutonomy(info.autonomousUntil);
     if (this.devices.has(info.id))
       throw Error("Revoke the existing connection first");
     if (this.devices.size >= 32) throw Error("Device limit reached");
@@ -48,6 +50,27 @@ export class Broker {
       overflow: false,
       busy: false,
     });
+  }
+  private checkAutonomy(until: number) {
+    const left = until - this.now();
+    if (left <= 0 || left > MAX_AUTONOMY_MS)
+      throw Error("Autonomous mode must expire within 2 hours");
+  }
+  /** Browser owner turns autonomous mode on (with expiry) or off (null). */
+  setAutonomy(owner: string, id: string, until: number | null) {
+    const d = this.devices.get(id);
+    if (!d || d.owner !== owner) return;
+    if (until === null) d.autonomousUntil = undefined;
+    else {
+      this.checkAutonomy(until);
+      d.autonomousUntil = until;
+    }
+  }
+  private autonomous(d: Device) {
+    return (
+      (d.kind === "mock" && d.autoApprove) ||
+      (!!d.autonomousUntil && d.autonomousUntil > this.now())
+    );
   }
   revoke(owner: string, id: string) {
     const d = this.devices.get(id);
@@ -131,12 +154,13 @@ export class Broker {
     this.seen.set(r.id, r.deadline);
     if (r.op === "devices.list")
       return [...this.devices.values()].map(
-        ({ id, name, kind, generation, baudRate }) => ({
+        ({ id, name, kind, generation, baudRate, autonomousUntil }) => ({
           id,
           name,
           kind,
           generation,
           baudRate,
+          autonomous: !!autonomousUntil && autonomousUntil > now,
         }),
       );
     const d = this.devices.get(r.deviceId ?? "");
@@ -177,8 +201,7 @@ export class Broker {
     d.busy = true;
     try {
       await new Promise<void>((resolve, reject) => {
-        const approval =
-          source === "agent" && !(d.kind === "mock" && d.autoApprove);
+        const approval = source === "agent" && !this.autonomous(d);
         const timer = setTimeout(
           () =>
             this.finish(

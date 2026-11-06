@@ -21,6 +21,7 @@ type Row = Descriptor & {
   exposed: boolean;
   baudRate: number;
   autoApprove: boolean;
+  autonomousUntil?: number;
 };
 type Rpc = {
   v: 1;
@@ -49,7 +50,8 @@ function App() {
     [baud, setBaud] = useState(115200),
     [latency, setLatency] = useState(20),
     [fail, setFail] = useState(false),
-    [agent, setAgent] = useState<Exclude<TerminalKind, "shell">>("codex");
+    [agent, setAgent] = useState<Exclude<TerminalKind, "shell">>("codex"),
+    [now, setNow] = useState(Date.now());
   const socket = useRef<WebSocket | null>(null),
     rowsRef = useRef<Row[]>([]),
     pending = useRef(
@@ -129,6 +131,10 @@ function App() {
       await rpc("serial.release", row, {}, lease).catch(() => {});
     }
   }
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
   useEffect(() => {
     void (async () => {
       const token = new URLSearchParams(location.hash.slice(1)).get("token");
@@ -324,10 +330,28 @@ function App() {
       },
     });
   }
+  function setAutonomy(row: Row, minutes: number | null) {
+    if (
+      minutes !== null &&
+      !window.confirm(
+        `Autonomous mode lets agents in the sandbox write to, reset and flash this device WITHOUT asking you, for ${minutes} minutes. Anything wired to the board may be affected. Turn it on?`,
+      )
+    )
+      return;
+    const until = minutes === null ? null : Date.now() + minutes * 60000;
+    send({ type: "autonomy", deviceId: row.id, until });
+    update((old) =>
+      old.map((r) =>
+        r.id === row.id ? { ...r, autonomousUntil: until ?? undefined } : r,
+      ),
+    );
+  }
   function revoke(row: Row) {
     send({ type: "revoke", deviceId: row.id });
     update((old) =>
-      old.map((r) => (r.id === row.id ? { ...r, exposed: false } : r)),
+      old.map((r) =>
+        r.id === row.id ? { ...r, exposed: false, autonomousUntil: undefined } : r,
+      ),
     );
     setApprovals((old) => old.filter((r) => r.deviceId !== row.id));
   }
@@ -511,6 +535,34 @@ function App() {
                       </button>
                     )}
                   </div>
+                  {row.exposed && (
+                    <div className="autonomy">
+                      {row.autonomousUntil && row.autonomousUntil > now ? (
+                        <>
+                          <span className="badge auto">
+                            AUTONOMOUS ·{" "}
+                            {Math.max(0, Math.ceil((row.autonomousUntil - now) / 1000))}s
+                          </span>
+                          <button
+                            className="danger"
+                            onClick={() => setAutonomy(row, null)}
+                          >
+                            Turn off
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <small>Agent autonomy: off (each write asks you)</small>
+                          <button onClick={() => setAutonomy(row, 15)}>
+                            Autonomous 15 min
+                          </button>
+                          <button onClick={() => setAutonomy(row, 60)}>
+                            60 min
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                   {row.kind === "mock" && !row.exposed && (
                     <label>
                       <input

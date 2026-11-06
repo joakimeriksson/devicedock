@@ -451,3 +451,18 @@ footer {
 .terminal-body .xterm {
   padding: 10px 5px 6px 12px;
 }
+
+.autonomy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.badge.auto {
+  background: #5a2a14;
+  color: #ffb98a;
+  border: 1px solid #a8541f;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+}

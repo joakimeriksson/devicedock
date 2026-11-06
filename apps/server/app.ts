@@ -157,6 +157,8 @@ export function createApp({
         const m = browserMessage.parse(JSON.parse(data.toString()));
         if (m.type === "expose") broker.expose(owner, send, m.device);
         else if (m.type === "revoke") broker.revoke(owner, m.deviceId);
+        else if (m.type === "autonomy")
+          broker.setAutonomy(owner, m.deviceId, m.until);
         else if (m.type === "data")
           broker.data(owner, m.deviceId, m.generation, m.data);
         else if (m.type === "approve") broker.approve(owner, m.id, m.allow);

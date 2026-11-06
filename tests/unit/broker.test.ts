@@ -175,3 +175,40 @@ test("overflow is explicit and monitor data does not enter stale leases", async 
 test("physical device auto-approval is forbidden", () => {
   assert.throws(() => fixture(true, "serial"), /require approval/);
 });
+test("autonomous mode: skips approval for physical devices only while the window is open", async () => {
+  const { b, d, sent, req } = fixture(false, "serial");
+  const { lease } = (await b.run("c", "agent", req("serial.acquire"))) as any;
+  // Without autonomy a physical write waits for approval.
+  const waiting = b.run("c", "agent", req("serial.write", lease, { data: "AA==" }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(sent.at(-1).type, "approval");
+  b.approve("browser", sent.at(-1).request.id, false);
+  await assert.rejects(waiting, /denied/);
+  // With autonomy the operation goes straight to the device.
+  b.setAutonomy("browser", d.id, Date.now() + 60_000);
+  const r = req("serial.write", lease, { data: "AA==" });
+  const done = b.run("c", "agent", r);
+  await new Promise((x) => setTimeout(x, 10));
+  assert.equal(sent.at(-1).type, "operation");
+  b.reply("browser", r.id, true);
+  await done;
+  // Expiry restores approval.
+  b.setAutonomy("browser", d.id, Date.now() + 20);
+  await new Promise((x) => setTimeout(x, 40));
+  const p = b.run("c", "agent", req("serial.write", lease, { data: "AA==" })).catch(() => {});
+  await new Promise((x) => setTimeout(x, 10));
+  assert.equal(sent.at(-1).type, "approval");
+  b.revoke("browser", d.id);
+  await p;
+});
+test("autonomous mode is owner-only, time-boxed, and cleared on revoke", () => {
+  const { b, d } = fixture(false, "serial");
+  b.setAutonomy("someone-else", d.id, Date.now() + 60_000);
+  assert.equal(b.devices.get(d.id)!.autonomousUntil, undefined);
+  assert.throws(() => b.setAutonomy("browser", d.id, Date.now() + 3 * 60 * 60 * 1000), /2 hours/);
+  assert.throws(() => b.setAutonomy("browser", d.id, Date.now() - 1), /2 hours/);
+  b.setAutonomy("browser", d.id, Date.now() + 60_000);
+  assert.ok(b.devices.get(d.id)!.autonomousUntil);
+  b.setAutonomy("browser", d.id, null);
+  assert.equal(b.devices.get(d.id)!.autonomousUntil, undefined);
+});

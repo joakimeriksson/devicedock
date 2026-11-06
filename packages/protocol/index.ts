@@ -1,4 +1,6 @@
 import { z } from "zod";
+// Autonomous mode is time-boxed so it cannot be left on indefinitely.
+export const MAX_AUTONOMY_MS = 2 * 60 * 60 * 1000;
 export const MAX_BYTES = 16384,
   MAX_BUFFER = 65536,
   MAX_PENDING = 64;
@@ -84,6 +86,8 @@ export const descriptor = z
     kind: z.enum(["mock", "serial"]),
     generation: z.number().int().positive(),
     autoApprove: z.boolean(),
+    // Epoch ms until which agent operations on this device skip approval ("autonomous mode").
+    autonomousUntil: z.number().int().positive().optional(),
     baudRate: z.number().int().min(300).max(4000000),
   })
   .strict();
@@ -91,6 +95,11 @@ export type DeviceDescriptor = z.infer<typeof descriptor>;
 export const browserMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("expose"), device: descriptor }),
   z.object({ type: z.literal("revoke"), deviceId: id }),
+  z.object({
+    type: z.literal("autonomy"),
+    deviceId: id,
+    until: z.number().int().positive().nullable(),
+  }),
   z.object({
     type: z.literal("data"),
     deviceId: id,

@@ -1,8 +1,10 @@
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, copyFileSync, existsSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import { request, response } from "../../packages/protocol/index.ts";
+import { DeviceClient } from "../../packages/device-client/index.ts";
+import { startRfc2217, type Api } from "./rfc2217.ts";
 const pending = new Map<
   string,
   { done: (value: unknown) => void; timer: ReturnType<typeof setTimeout> }
@@ -130,3 +132,23 @@ wss.on("connection", (ws: WebSocket) => {
 server.listen(47832, "0.0.0.0", () =>
   console.log("Container device bridge ready"),
 );
+
+// RFC 2217 serial server for esptool/pyserial/PlatformIO. The bridge token is provisioned after the
+// container starts, so the client is created on first use. Loopback only; not published to the Mac.
+let deviceClient: DeviceClient | undefined;
+const lazyApi: Api = {
+  list: () => (deviceClient ??= new DeviceClient()).list(),
+  call: (op, device, args, lease) =>
+    (deviceClient ??= new DeviceClient()).call(op as never, device as never, args, lease),
+};
+startRfc2217(lazyApi, 2217, "127.0.0.1");
+
+// Seed agent instructions into the workspace volume (never overwrite the user's own versions).
+for (const f of ["AGENTS.md", "CLAUDE.md"]) {
+  try {
+    if (!existsSync(`/workspace/${f}`))
+      copyFileSync(`/opt/devicedock/sandbox/${f}`, `/workspace/${f}`);
+  } catch (e) {
+    console.error(`Could not seed ${f}: ${(e as Error).message}`);
+  }
+}
