@@ -151,10 +151,16 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
     };
     const op = (name: string, args: Record<string, unknown> = {}) =>
       enqueue(async () => {
-        await sync();
+        // Modem-control lines do not depend on the baud rate, so they never force a reconfigure.
+        // Reads wait until the settings have been stable briefly, so a client's transient baud flips
+        // (esptool opens at 9600 then sets 115200) never cause a port reopen.
+        if (name === "serial.read" ? Date.now() - cfgChangedAt > 1000 : name !== "serial.signals")
+          await sync();
         return api.call(name, device, args, lease);
       });
+    let cfgChangedAt = 0;
     const applyConfig = (next: Partial<typeof cfg>) => {
+      if (Object.entries(next).some(([k, v]) => (cfg as Record<string, unknown>)[k] !== v)) cfgChangedAt = Date.now();
       Object.assign(cfg, next);
       return Promise.resolve();
     };
