@@ -52,11 +52,19 @@ This opens a one-time session URL on `http://127.0.0.1:47831`. Its fragment is r
 
 A UI-only mock test is available with `npm run test:browser` (installed Chrome required). This test does **not** demonstrate the Docker path; perform the steps above separately.
 
-## Agent login callback relay status
+## Agent login (inside the sandbox)
 
-Codex web login on the Mac successfully opened a local OAuth callback at `http://127.0.0.1:1455/auth/callback`. That proves the host Codex flow works. It does not route that callback into the isolated container. The container callback relay is **planned, not implemented or verified**. Starting a relay must be explicit, and it must refuse to bind when the Mac Codex login already owns port 1455. See the current objective in [PLAN.md](PLAN.md).
+Credentials live only in the `devicedock-home` Docker volume. Nothing is copied from the Mac. A Mac login does not log in the container.
 
-Claude Code and OpenCode login discovery/compatibility are also pending. Their callbacks and credential storage must be checked separately; do not assume they can use the Codex relay.
+| Agent | Command (run on the Mac) | How it works |
+| --- | --- | --- |
+| Codex | `npm run login:codex` | Opt-in callback relay (below). Verify with `codex login status` in the sandbox shell. |
+| Claude Code | `docker exec -it devicedock-sandbox claude auth login` | Hosted redirect: open the printed URL on the Mac, paste the code back. No relay needed. |
+| OpenCode | `docker exec -it devicedock-sandbox opencode auth login` | Provider login; behavior not yet verified here. API-key providers need no callback. |
+
+**Codex relay.** `npm run login:codex` binds Mac `127.0.0.1:1455` only for the duration of one container `codex login`, forwards only `GET /auth/callback` into the container, and never logs request contents. It exits if port 1455 is taken (for example by a Mac Codex login; it will not touch that process), when the login ends, or after 10 minutes. Forwarding was tested with a stand-in listener; a real OAuth round trip still needs a human to complete the browser login.
+
+To log out: `docker exec devicedock-sandbox codex logout` / `claude auth logout`, or remove the `devicedock-home` volume.
 
 ## Agent authentication and MCP
 
@@ -67,7 +75,7 @@ codex login status
 codex mcp add devicedock -- /opt/devicedock/node_modules/.bin/tsx /opt/devicedock/packages/mcp-server/index.ts
 ```
 
-Codex web login callback forwarding into this container is not implemented yet. Do not treat a Mac login as a container login. Restart the agent terminal after configuration. Credentials stay inside the dedicated `devicedock-home` Docker volume. Host authentication files and the Docker socket are never mounted into the sandbox.
+Restart the agent terminal after configuration. Credentials stay inside the dedicated `devicedock-home` Docker volume. Host authentication files and the Docker socket are never mounted into the sandbox.
 
 The stdio MCP server exposes discovery, acquisition/release, connect/disconnect, read/write, configure, and signal tools. MCP and CLI requests use the same SDK and backend authorization path. There is no HTTP MCP listener. MCP tools return explicit errors for missing leases and denied approvals.
 

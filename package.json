@@ -18,6 +18,7 @@
     "sandbox:stop": "tsx scripts/sandbox.ts stop",
     "sandbox:clean": "tsx scripts/sandbox.ts clean",
     "open": "node scripts/open.mjs",
+    "login:codex": "tsx scripts/login-relay.ts",
     "device": "tsx packages/device-client/cli.ts",
     "mcp": "tsx packages/mcp-server/index.ts",
     "postinstall": "node scripts/prepare-pty.mjs",
