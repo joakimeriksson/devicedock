@@ -1,0 +1,31 @@
+# Security model
+
+DeviceDock trusts the user, the Mac backend, and the browser application code. Container programs are allowed to request device operations, but are not trusted to choose whether a physical-device operation is approved. Other local OS processes with access to the user's files or Docker daemon are outside this isolation boundary.
+
+## Authentication
+
+The Mac HTTP server binds only to 127.0.0.1, checks an exact Host header, and does not enable CORS. Browser WebSockets require the exact Origin, an authenticated session cookie, and a CSRF subprotocol token. State-changing HTTP requests require the exact Origin and CSRF header. Bootstrap is single use; its fragment is removed before the exchange. Session cookies are HttpOnly and SameSite=Strict, expire after 12 hours, and are intentionally not Secure on plain loopback HTTP.
+
+Container bridge authentication is separate from browser authentication. Its random token is written to a mode-0600 file through Docker exec stdin and stored in the non-root container home. The service validates protocol messages, body limits, deadlines, Host, and bearer authentication. It does not accept browser Origins. Neither URLs nor ordinary logs contain this token. Container clients can read the container token; it conveys device request capability, never browser approval capability.
+
+## Ownership, authorization, and approval
+
+Browser permission, opening a port, and exposing it are separate actions. A connection has an opaque UUID and generation, and one browser owner. Exposed physical devices cannot enable automatic approval. An agent request for writes, configuration, control/reset signals, connect, or disconnect enters a single-use approval state. Approval is bound to the exact request, device, generation, lease, owner, and deadline. Expired, denied, stale, or replayed approvals cannot dispatch operations.
+
+UI operations also need an exclusive lease. They are direct user actions, so they do not produce a second approval dialog. Automatic mock approval requires an explicit checked control when sharing the mock. No flashing tool exists: arbitrary serial streams cannot reliably be classified as flashing or non-destructive.
+
+Only one client lease may control a device at a time. A lease is an unguessable token, bound to the client ID and connection generation. The container is one trust domain; its processes share the same bridge token and can cooperate or impersonate client IDs if they also know the corresponding lease token. This is not per-process authentication inside the container.
+
+Revocation, browser loss, and unplug reject outstanding operations and invalidate leases. Backend bridge loss invalidates associated client leases. Reconnect requires explicit sharing and a fresh lease. Pending operations that have already reached the OS/device cannot be rolled back. No write is replayed automatically.
+
+## Resource limits and isolation
+
+The protocol validates operations and arguments with Zod, restricts bytes to base64, caps payloads and pending operations, and bounds per-lease receive buffers. Overflow is reported as data loss. Terminal and monitor histories are bounded. Unknown operations, including flashing, are rejected.
+
+Docker has no host device, home, credential, or Docker socket mounts. It runs non-root with dropped capabilities, no-new-privileges, resource limits, and a read-only root filesystem. Network access and writable home/workspace volumes are intentionally available. A compromised Docker engine or a malicious process running as the Mac user is not contained by this application.
+
+The Mac PTY layer uses fixed argument arrays. Browser input is never interpolated into host shell commands. The authenticated container bridge implements device RPC only, never host shell execution.
+
+## Remaining assurance work
+
+This initial implementation has not completed a clean install, full typecheck, HTTP/WebSocket runtime checks, Docker execution, browser QA, or physical-device QA in the restricted task environment. Do not treat unit-test success as a production security audit. Finish the checks in VERIFICATION.md before using real hardware. Credential backups, multi-user support, TLS beyond loopback, and adversarial resource-exhaustion testing are outside this MVP.
