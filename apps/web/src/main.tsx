@@ -395,14 +395,14 @@ function App() {
       },
     });
   }
-  function setAutonomy(row: Row, minutes: number | null) {
+  function setAutonomy(row: Row, minutes: number | null): boolean {
     if (
       minutes !== null &&
       !window.confirm(
         `Autonomous mode lets agents in the sandbox write to, reset and flash this device WITHOUT asking you, for ${minutes} minutes. Anything wired to the board may be affected. Turn it on?`,
       )
     )
-      return;
+      return false;
     const until = minutes === null ? null : Date.now() + minutes * 60000;
     send({ type: "autonomy", deviceId: row.id, until });
     update((old) =>
@@ -410,6 +410,7 @@ function App() {
         r.id === row.id ? { ...r, autonomousUntil: until ?? undefined } : r,
       ),
     );
+    return true;
   }
   function revoke(row: Row) {
     if (row.name in rememberedRef.current) {
@@ -805,13 +806,27 @@ function App() {
             role="dialog"
             aria-label="Device operation approval"
           >
-            <div className="eyebrow">HUMAN APPROVAL REQUIRED</div>
+            <div className="eyebrow">
+              HUMAN APPROVAL REQUIRED · {approvals.length} waiting
+            </div>
             <h2>Allow this device operation?</h2>
             <p>
               Arbitrary serial bytes and control signals may change hardware
-              state.
+              state. Tools like esptool send dozens of operations; for a
+              flashing session use “Allow all for 15 min” instead of clicking
+              each one.
             </p>
             <pre>{JSON.stringify(approvals[0], null, 2)}</pre>
+            <button
+              className="danger"
+              onClick={() => {
+                for (const a of approvals)
+                  send({ type: "approve", id: a.id, allow: false });
+                setApprovals([]);
+              }}
+            >
+              Deny all ({approvals.length})
+            </button>
             <button
               className="danger"
               onClick={() => {
@@ -822,13 +837,25 @@ function App() {
               Deny
             </button>
             <button
-              className="primary"
               onClick={() => {
                 send({ type: "approve", id: approvals[0].id, allow: true });
                 setApprovals((old) => old.slice(1));
               }}
             >
               Allow once
+            </button>
+            <button
+              className="primary"
+              onClick={() => {
+                const dev = approvals[0].deviceId;
+                const row = rowsRef.current.find((r) => r.id === dev);
+                if (!row || !setAutonomy(row, 15)) return;
+                for (const a of approvals.filter((x) => x.deviceId === dev))
+                  send({ type: "approve", id: a.id, allow: true });
+                setApprovals((old) => old.filter((x) => x.deviceId !== dev));
+              }}
+            >
+              Allow all for 15 min
             </button>
           </section>
         </div>
