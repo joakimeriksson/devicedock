@@ -1,6 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { WebSocket } from "ws";
+import { request as httpRequest } from "node:http";
+
+// fetch() silently ignores a custom Host header, so use raw http.request.
+const statusWithHost = (port: number, path: string, host: string) =>
+  new Promise<number>((resolve, reject) => {
+    const req = httpRequest({ host: "127.0.0.1", port, path, headers: { Host: host } }, (res) => {
+      res.resume();
+      resolve(res.statusCode!);
+    });
+    req.on("error", reject);
+    req.end();
+  });
 import { createApp } from "../../apps/server/app.ts";
 test("HTTP and WebSockets reject unauthenticated, hostile origin, CSRF, and reused bootstrap", async () => {
   const port = 47951;
@@ -12,14 +24,7 @@ test("HTTP and WebSockets reject unauthenticated, hostile origin, CSRF, and reus
     });
     const origin = runtime.origin;
     assert.equal((await fetch(origin + "/api/health")).status, 401);
-    assert.equal(
-      (
-        await fetch(origin + "/api/health", {
-          headers: { Host: "evil.example" },
-        })
-      ).status,
-      403,
-    );
+    assert.equal(await statusWithHost(port, "/api/health", "evil.example"), 403);
     assert.equal(
       (
         await fetch(origin + "/api/session", {
