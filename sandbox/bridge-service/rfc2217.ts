@@ -178,7 +178,9 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
     // DTR and RTS must reach the port in ONE operation. esptool enters the bootloader by changing both
     // back to back, and a board's auto-reset circuit treats "both on" as neutral, so even a short gap
     // (each bridge operation takes tens of ms) lets the chip boot normally instead of into download mode.
-    // So changes are merged over a few ms and applied together.
+    // So changes are merged over a short trailing-edge window (80 ms) and applied together. The window must exceed the gap between
+    // two consecutive pyserial calls (~52 ms: rfc2217_set_control polls for the ack in 50 ms steps) and stay below the
+    // holds esptool really intends (>= 100 ms).
     let signalTimer: ReturnType<typeof setTimeout> | undefined;
     const flushSignals = () => {
       if (!signalTimer) return Promise.resolve();
@@ -191,7 +193,7 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
     };
     const scheduleSignals = () => {
       if (signalTimer) clearTimeout(signalTimer);
-      signalTimer = setTimeout(() => void flushSignals(), 4);
+      signalTimer = setTimeout(() => void flushSignals(), 80);
     };
 
     const handleSub = async (p: Buffer) => {
