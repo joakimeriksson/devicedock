@@ -466,3 +466,11 @@ footer {
   font-weight: 700;
   letter-spacing: 0.6px;
 }
+
+.rx, .tx { user-select: none; -webkit-user-select: none; }
+.monitor-log { user-select: text; -webkit-user-select: text; }
+.monitor-actions { display: flex; gap: 6px; align-items: center; }
+.monitor-actions select {
+  background: #131d28; color: inherit; border: 1px solid #2a3a4a;
+  border-radius: 6px; padding: 2px 6px; font: inherit;
+}

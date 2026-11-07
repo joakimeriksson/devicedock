@@ -58,8 +58,10 @@ function App() {
     [connected, setConnected] = useState(false),
     [rows, setRows] = useState<Row[]>([]),
     [logs, setLogs] = useState<
-      { text: string; hex: string; direction: string }[]
+      { bytes: Uint8Array; text: string; hex: string; direction: string }[]
     >([]),
+    [monitorMode, setMonitorMode] = useState<"text" | "chunks">("text"),
+    [copied, setCopied] = useState<"" | "ok" | "failed">(""),
     [approvals, setApprovals] = useState<Rpc[]>([]),
     [text, setText] = useState("PING\n"),
     [hex, setHex] = useState(false),
@@ -77,6 +79,7 @@ function App() {
     setRememberedState(next);
     saveRemembered(next);
   }
+  const monitorEnd = useRef<HTMLDivElement>(null);
   const socket = useRef<WebSocket | null>(null),
     rowsRef = useRef<Row[]>([]),
     pending = useRef(
@@ -103,16 +106,69 @@ function App() {
     setError("");
     void fn().catch((e) => setError(e.message));
   };
+  // Text mode joins consecutive chunks of one direction into a continuous stream (decoded once, so a
+  // multi-byte character split across chunks stays intact); chunk mode keeps one row per received piece.
+  function monitorBlocks() {
+    if (monitorMode === "chunks")
+      return logs.map((l) => ({
+        direction: l.direction,
+        text: hex ? l.hex : l.text,
+      }));
+    const blocks: { direction: string; bytes: number[] }[] = [];
+    for (const l of logs) {
+      const last = blocks.at(-1);
+      if (last && last.direction === l.direction) last.bytes.push(...l.bytes);
+      else blocks.push({ direction: l.direction, bytes: [...l.bytes] });
+    }
+    return blocks.map((b) => ({
+      direction: b.direction,
+      text: hex
+        ? b.bytes.map((x) => x.toString(16).padStart(2, "0")).join(" ")
+        : new TextDecoder().decode(Uint8Array.from(b.bytes)),
+    }));
+  }
+  async function copyMonitor() {
+    // Exactly what is shown, without the RX/TX badges.
+    const out = monitorBlocks()
+      .map((b) => b.text)
+      .reduce((acc, t) => acc + (acc && !acc.endsWith("\n") ? "\n" : "") + t, "");
+    // execCommand("copy") is synchronous inside the click and does not depend on focus/permission prompts;
+    // navigator.clipboard can stay pending in some contexts, so it is the fallback and is time-limited.
+    let ok = false;
+    const ta = document.createElement("textarea");
+    ta.value = out;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      ok = document.execCommand("copy");
+    } catch {}
+    ta.remove();
+    if (!ok) {
+      try {
+        await Promise.race([
+          navigator.clipboard.writeText(out).then(() => (ok = true)),
+          new Promise((r) => setTimeout(r, 1000)),
+        ]);
+      } catch {}
+    }
+    setCopied(ok ? "ok" : "failed");
+    setTimeout(() => setCopied(""), 2000);
+  }
   function log(bytes: Uint8Array, direction: string) {
     setLogs((old) =>
       [
         ...old,
         {
+          bytes,
           text: new TextDecoder().decode(bytes),
           hex: [...bytes].map((b) => b.toString(16).padStart(2, "0")).join(" "),
           direction,
         },
-      ].slice(-150),
+      ].slice(-1000),
     );
   }
   async function rpc(
@@ -162,6 +218,12 @@ function App() {
     navigator.serial?.addEventListener("connect", onConnect);
     return () => navigator.serial?.removeEventListener("connect", onConnect);
   }, []);
+  useEffect(() => {
+    // Follow new output unless the user scrolled up to read.
+    const el = monitorEnd.current;
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80)
+      el.scrollTop = el.scrollHeight;
+  }, [logs]);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
@@ -755,16 +817,38 @@ function App() {
             <section className="panel monitor">
               <header>
                 <span>Serial monitor</span>
-                <button onClick={() => setLogs([])}>Clear</button>
+                <span className="monitor-actions">
+                  <select
+                    aria-label="Monitor mode"
+                    value={monitorMode}
+                    onChange={(e) =>
+                      setMonitorMode(e.target.value as "text" | "chunks")
+                    }
+                  >
+                    <option value="text">Text</option>
+                    <option value="chunks">Chunks</option>
+                  </select>
+                  <button onClick={() => void copyMonitor()}>
+                    {copied === "ok" ? "Copied" : copied === "failed" ? "Copy failed" : "Copy"}
+                  </button>
+                  <button onClick={() => setLogs([])}>Clear</button>
+                </span>
               </header>
-              <div className="monitor-log" aria-label="Serial monitor">
+              <div
+                className="monitor-log"
+                aria-label="Serial monitor"
+                ref={monitorEnd}
+              >
                 {logs.length ? (
-                  logs.map((l, i) => (
+                  monitorBlocks().map((b, i) => (
                     <div key={i}>
-                      <span className={l.direction === "TX" ? "tx" : "rx"}>
-                        {l.direction}
+                      <span
+                        className={b.direction === "TX" ? "tx" : "rx"}
+                        aria-hidden="true"
+                      >
+                        {b.direction}
                       </span>
-                      <pre>{hex ? l.hex : l.text}</pre>
+                      <pre>{b.text}</pre>
                     </div>
                   ))
                 ) : (
