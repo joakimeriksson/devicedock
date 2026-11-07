@@ -28,6 +28,13 @@ async function fetchBuffer(url: string): Promise<ArrayBuffer> {
   return r.arrayBuffer();
 }
 
+export const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+export function fromHex(h: string): Uint8Array {
+  const out = new Uint8Array(h.length >> 1);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substr(i * 2, 2), 16);
+  return out;
+}
+
 /** RGB565 little-endian pixels to RGBA, the engine-neutral frame format. */
 export function rgb565ToRgba(pixels: Uint8Array, width: number, height: number): Uint8ClampedArray {
   const out = new Uint8ClampedArray(width * height * 4);
@@ -50,7 +57,6 @@ export function createEsp32SimEngine(): SimEngine {
   let bundle: Bundle | undefined;
   let waiter: { key: string; resolve: (m: any) => void; reject: (e: Error) => void } | undefined;
 
-  const dec = new TextDecoder();
   const enc = new TextEncoder();
 
   function onMessage(ev: MessageEvent) {
@@ -63,8 +69,9 @@ export function createEsp32SimEngine(): SimEngine {
     if (typeof m.text === "string") {
       let j: any;
       try { j = JSON.parse(m.text); } catch { return; }
+      // `hex` carries the exact bytes whenever they are not valid UTF-8 (binary protocols such as esptool's SLIP).
       if (j.t === "serial" && typeof j.data === "string")
-        emit({ type: "console", console: String(j.src ?? "usb"), bytes: enc.encode(j.data) });
+        emit({ type: "console", console: String(j.src ?? "usb"), bytes: typeof j.hex === "string" ? fromHex(j.hex) : enc.encode(j.data) });
       else if (j.t === "emu") emit({ type: "status", message: String(j.msg ?? "") });
     } else if (m.bin instanceof ArrayBuffer) {
       const b = new Uint8Array(m.bin);
@@ -135,22 +142,20 @@ export function createEsp32SimEngine(): SimEngine {
       worker = undefined;
     },
     async reset(opts) {
-      if (!bundle || !profile) return;
-      this.stop();
-      // esp32sim's wasm build has no live reset op: a reset is a fresh boot from the same images, so
-      // anything written to the simulated flash since the last boot is gone.
-      emit({
-        type: "status",
-        message:
-          "Simulator reset: rebooted from the original images; the simulated flash is not kept." +
-          (opts?.download ? " The download-mode strap is not supported by this engine." : ""),
-      });
-      await boot();
+      if (!worker || !profile) return;
+      // A live reset: set the boot-mode pins the ROM samples (download mode for esptool), then reset the chip in
+      // place. It reboots through the ROM and keeps the flash, so firmware written by esptool boots afterwards.
+      const strap = (profile.engineConfig as { strap?: { normal?: string; download?: string } }).strap ?? {};
+      const v = opts?.download ? strap.download : strap.normal;
+      if (opts?.download && !v) emit({ type: "status", message: "This board's profile names no download-mode strap; resetting normally." });
+      if (v) worker.postMessage({ op: "text", data: JSON.stringify({ t: "strap", v }) });
+      worker.postMessage({ op: "text", data: JSON.stringify({ t: "reset" }) });
     },
     write(bytes: Uint8Array, console: SimConsole) {
-      // `key` delivers bytes exactly as typed. The text protocol carries a string, so this is exact for
-      // ASCII and UTF-8 text (REPL use) but not for arbitrary binary.
-      worker?.postMessage({ op: "text", data: JSON.stringify({ t: "key", src: console, data: dec.decode(bytes) }) });
+      // `bytes` (hex) is binary-safe; `key` carries a JSON string and would mangle bytes >= 0x80. Chunks stay well
+      // under the simulator's 64 KiB per message; the UART releases them to the firmware at the baud rate.
+      for (let i = 0; i < bytes.length; i += 16384)
+        worker?.postMessage({ op: "text", data: JSON.stringify({ t: "bytes", src: console, hex: toHex(bytes.subarray(i, i + 16384)) }) });
     },
     setButton(pin, down) {
       worker?.postMessage({ op: "text", data: JSON.stringify({ t: "btn", pin, v: down ? 1 : 0 }) });

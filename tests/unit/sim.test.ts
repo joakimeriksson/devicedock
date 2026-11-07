@@ -102,3 +102,10 @@ test("esp32sim RGB565 frames convert to RGBA", () => {
   const px = new Uint8Array([0x00, 0xf8, 0xe0, 0x07, 0x1f, 0x00, 0xff, 0xff]);
   assert.deepEqual([...rgb565ToRgba(px, 4, 1)], [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]);
 });
+
+test("esp32sim engine: hex round-trips every byte (esptool's SLIP is binary)", async () => {
+  const { toHex, fromHex } = await import("../../apps/web/src/sim/engines/esp32sim.ts");
+  const all = Uint8Array.from({ length: 256 }, (_, i) => i);
+  assert.equal(toHex(Uint8Array.from([0xc0, 0x00, 0xdb, 0xff])), "c000dbff");
+  assert.deepEqual([...fromHex(toHex(all))], [...all]);
+});
