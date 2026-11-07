@@ -10,7 +10,15 @@ export type Signals = {
   requestToSend?: boolean;
   break?: boolean;
 };
-export type Descriptor = { id: string; name: string; kind: "mock" | "serial" };
+import type { DeviceKind } from "../../../packages/protocol/index.ts";
+export type Descriptor = {
+  id: string;
+  name: string;
+  kind: DeviceKind;
+  /** Display-only labels for software devices; never used for policy. */
+  engine?: string;
+  board?: string;
+};
 export type DeviceEvent =
   { type: "data"; bytes: Uint8Array } | { type: "disconnect"; error?: string };
 export type Handler = (event: DeviceEvent) => void;

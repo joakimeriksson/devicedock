@@ -1,7 +1,6 @@
 import {
   request as protocolRequest,
-  options as serialOptions,
-} from "../../../packages/protocol/index.ts";
+  options as serialOptions, isPhysical, isVirtual } from "../../../packages/protocol/index.ts";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -391,7 +390,7 @@ function App() {
       open: false,
       exposed: false,
       baudRate: baud,
-      autoApprove: d.kind === "mock",
+      autoApprove: isVirtual(d.kind),
     };
     adapter.subscribe(d.id, (event) => {
       const current = rowsRef.current.find((r) => r.id === d.id);
@@ -427,7 +426,7 @@ function App() {
   async function expose(row: Row, auto?: { baudRate: number }) {
     if (
       !auto &&
-      row.kind === "serial" &&
+      isPhysical(row.kind) &&
       !window.confirm(
         "Sharing lets container programs request arbitrary serial bytes, which may change hardware state. Each agent operation will require your approval. It will be shared again automatically after restarts (untick “Auto-share next time” to stop). Open and share this port?",
       )
@@ -437,7 +436,7 @@ function App() {
     // An already-open port is kept open: reopening can reset the attached board.
     if (!row.open)
       await row.adapter.open(row.id, serialOptions.parse({ baudRate: useBaud }));
-    if (row.kind === "serial" && !auto)
+    if (isPhysical(row.kind) && !auto)
       setRemembered({ ...rememberedRef.current, [row.name]: useBaud });
     const next = {
       ...row,
@@ -456,6 +455,8 @@ function App() {
         generation: next.generation,
         baudRate: next.baudRate,
         autoApprove: next.autoApprove,
+        ...(next.engine ? { engine: next.engine } : {}),
+        ...(next.board ? { board: next.board } : {}),
       },
     });
   }
@@ -647,7 +648,12 @@ function App() {
                     </span>
                   </div>
                   <small>
-                    {row.kind === "mock" ? "Browser mock" : "WebSerial"} ·{" "}
+                    {row.kind === "mock"
+                      ? "Browser mock"
+                      : row.kind === "sim"
+                        ? `Simulated · ${row.engine ?? "emulator"}${row.board ? ` · ${row.board}` : ""}`
+                        : "WebSerial"}{" "}
+                    ·{" "}
                     {row.baudRate} baud · generation {row.generation}
                   </small>
                   <code className="device-id">{row.id}</code>
@@ -689,7 +695,7 @@ function App() {
                       </button>
                     )}
                   </div>
-                  {row.kind === "serial" && (
+                  {isPhysical(row.kind) && (
                     <label>
                       <input
                         type="checkbox"
@@ -734,7 +740,7 @@ function App() {
                       )}
                     </div>
                   )}
-                  {row.kind === "mock" && !row.exposed && (
+                  {isVirtual(row.kind) && !row.exposed && (
                     <label>
                       <input
                         type="checkbox"

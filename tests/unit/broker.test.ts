@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Broker } from "../../apps/server/broker.ts";
-import { request, base64, MAX_BUFFER } from "../../packages/protocol/index.ts";
+import { request, base64, MAX_BUFFER, descriptor } from "../../packages/protocol/index.ts";
 function fixture(autoApprove = true, kind: "mock" | "serial" = "mock") {
   const b = new Broker();
   const sent: any[] = [];
@@ -211,4 +211,31 @@ test("autonomous mode is owner-only, time-boxed, and cleared on revoke", () => {
   assert.ok(b.devices.get(d.id)!.autonomousUntil);
   b.setAutonomy("browser", d.id, null);
   assert.equal(b.devices.get(d.id)!.autonomousUntil, undefined);
+});
+test("software devices (mock, sim) may waive approval, physical ones never; sims are labelled", async () => {
+  const sent: any[] = [];
+  const b = new Broker();
+  const sim = {
+    id: randomUUID(), name: "Simulated T-Display", kind: "sim" as const, engine: "esp32sim", board: "ttgo-tdisplay",
+    generation: 1, autoApprove: true, baudRate: 115200,
+  };
+  b.expose("browser", (m) => sent.push(m), sim); // allowed: nothing physical can be affected
+  const listed = (await b.run("c", "agent", { v: 1, id: randomUUID(), op: "devices.list", args: {}, deadline: Date.now() + 5000 })) as any[];
+  assert.equal(listed[0].simulated, true);
+  assert.equal(listed[0].engine, "esp32sim");
+  assert.equal(listed[0].board, "ttgo-tdisplay");
+  // A write on an auto-approved sim goes straight to the device, with no approval step.
+  const req = (op: string, lease?: string, args: unknown = {}) => ({ v: 1, id: randomUUID(), deviceId: sim.id, generation: 1, op, args, lease, deadline: Date.now() + 5000 });
+  const { lease } = (await b.run("c", "agent", req("serial.acquire"))) as any;
+  const w = req("serial.write", lease, { data: "AA==" });
+  const done = b.run("c", "agent", w);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(sent.at(-1).type, "operation");
+  b.reply("browser", w.id, true);
+  await done;
+  // Hardware can never be flagged auto-approve, whatever it is called.
+  assert.throws(() => b.expose("browser", () => {}, { ...sim, id: randomUUID(), kind: "serial" as const }), /require approval/);
+  // An unknown kind is rejected at the protocol boundary.
+  assert.equal(descriptor.safeParse({ ...sim, kind: "quantum" }).success, false);
+  assert.equal(descriptor.safeParse(sim).success, true);
 });

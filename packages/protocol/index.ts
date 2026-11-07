@@ -79,11 +79,26 @@ export const request = z.discriminatedUnion("op", [
   }),
 ]);
 export type Request = z.infer<typeof request>;
+/**
+ * What a device IS decides the safety policy; how it is implemented does not.
+ *  - "serial": real hardware behind a browser-granted port (approvals, hardware warning, auto-share memory).
+ *  - "mock" / "sim": software devices (the built-in loopback mock; an emulator behind a SimEngine). Nothing
+ *    physical can be affected, so approvals may be waived and the hardware warning is not shown.
+ * Add a new simulator by writing a SimEngine, not a new kind: give it kind "sim" and set `engine`/`board`.
+ */
+export const DEVICE_KINDS = ["serial", "mock", "sim"] as const;
+export type DeviceKind = (typeof DEVICE_KINDS)[number];
+export const isPhysical = (kind: DeviceKind) => kind === "serial";
+export const isVirtual = (kind: DeviceKind) => !isPhysical(kind);
+
 export const descriptor = z
   .object({
     id,
     name: z.string().min(1).max(100),
-    kind: z.enum(["mock", "serial"]),
+    kind: z.enum(DEVICE_KINDS),
+    // Display-only labels for software devices (e.g. engine "esp32sim", board "ttgo-tdisplay"); never policy.
+    engine: z.string().max(40).optional(),
+    board: z.string().max(60).optional(),
     generation: z.number().int().positive(),
     autoApprove: z.boolean(),
     // Epoch ms until which agent operations on this device skip approval ("autonomous mode").

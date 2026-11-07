@@ -4,6 +4,8 @@ import {
   MAX_BUFFER,
   MAX_PENDING,
   MAX_AUTONOMY_MS,
+  isPhysical,
+  isVirtual,
   type Request,
   type DeviceDescriptor,
 } from "../../packages/protocol/index.ts";
@@ -36,7 +38,7 @@ export class Broker {
     private leaseMs = 30000,
   ) {}
   expose(owner: string, send: Send, info: DeviceDescriptor) {
-    if (info.kind === "serial" && info.autoApprove)
+    if (isPhysical(info.kind) && info.autoApprove)
       throw Error("Physical devices require approval");
     if (info.autonomousUntil) this.checkAutonomy(info.autonomousUntil);
     if (this.devices.has(info.id))
@@ -68,7 +70,7 @@ export class Broker {
   }
   private autonomous(d: Device) {
     return (
-      (d.kind === "mock" && d.autoApprove) ||
+      (isVirtual(d.kind) && d.autoApprove) ||
       (!!d.autonomousUntil && d.autonomousUntil > this.now())
     );
   }
@@ -154,10 +156,14 @@ export class Broker {
     this.seen.set(r.id, r.deadline);
     if (r.op === "devices.list")
       return [...this.devices.values()].map(
-        ({ id, name, kind, generation, baudRate, autonomousUntil }) => ({
+        ({ id, name, kind, engine, board, generation, baudRate, autonomousUntil }) => ({
           id,
           name,
           kind,
+          // A software device is labelled as such, so agents never mistake a simulation for hardware.
+          simulated: isVirtual(kind),
+          ...(engine ? { engine } : {}),
+          ...(board ? { board } : {}),
           generation,
           baudRate,
           autonomous: !!autonomousUntil && autonomousUntil > now,

@@ -5,7 +5,10 @@ export type Device = {
   id: string;
   generation: number;
   name: string;
-  kind: "serial" | "mock";
+  kind: "serial" | "mock" | "sim";
+  simulated?: boolean;
+  engine?: string;
+  board?: string;
   baudRate: number;
 };
 export class DeviceClient {
