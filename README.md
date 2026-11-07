@@ -161,4 +161,11 @@ Workflow: *Add serial port* → *Open & share* → turn on **Autonomous** (15/60
 flashes and reads output on its own. Without autonomous mode every write waits for your approval click.
 One client holds the device at a time (exclusive lease). `AGENTS.md` / `CLAUDE.md` in `/workspace` tell the
 agents this. Safety trade-offs: see SECURITY.md. Verified with real pyserial and esptool 5.6 against a
-simulated device (`tests/rfc2217/run.sh`); **not yet verified on a real ESP32**.
+simulated device (`tests/rfc2217/run.sh`); **verified on a real ESP32-D0WDQ6-V3 (CH9102 USB-serial) on 2026-11-07**: `esptool chip-id` entered the bootloader automatically, uploaded the stub flasher and read the MAC through the bridge. Not yet verified on real hardware: flash writes, `mpremote`, and an agent driving the loop.
+
+### How the reset timing works (why DTR/RTS are merged)
+`esptool` enters the bootloader by changing DTR and RTS together; a board's auto-reset circuit treats "both on"
+as neutral, so a gap between the two lets the chip boot normally ("Wrong boot mode detected (0x13)"). pyserial's
+RFC 2217 client waits for each acknowledgement in 50 ms steps, so the two changes arrive ~52 ms apart. The
+server therefore merges DTR/RTS changes over an 80 ms trailing-edge window and applies them as one operation
+(`tests/rfc2217/run.sh` checks this, including esptool's reset cycle `-R` -> `D-` -> `--`).
