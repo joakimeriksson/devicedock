@@ -48,3 +48,11 @@ workflow the owner chose to relax this, explicitly and with limits:
   autonomous mode therefore means the agent may flash the shared board. Do not enable it for a board with
   hardware attached that must not be disturbed.
 - Approval is still the default and is still required whenever autonomous mode is off or expired.
+
+## Renewing the browser login without a restart
+`./devicedock.sh open` asks the running backend for a fresh one-time login link (`POST /admin/session-link`), so an
+expired or used login never needs a restart. The endpoint is for the command line only: it refuses any request that
+carries an `Origin` header, requires a bearer token from `.runtime/admin-token` (mode 0600, generated at startup,
+**never given to the container**, unlike the bridge token), mints links valid for 5 minutes, and allows at most
+5 unused links at once. Without the token file the endpoint is disabled.
+

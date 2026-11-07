@@ -30,12 +30,7 @@ end_stray_codex() {
 
 cmd_build() { need_docker; say "Building frontend"; npm run -s build; say "Building sandbox image"; npm run -s sandbox:build; }
 
-cmd_start() {
-  need_docker
-  docker image inspect $IMAGE >/dev/null 2>&1 || { say "Sandbox image missing, building"; npm run -s sandbox:build; }
-  [ -f dist/index.html ] || { say "Building frontend"; npm run -s build; }
-  say "Starting sandbox container"; npm run -s sandbox:start
-  end_stray_codex
+start_backend() {
   if [ -n "$(backend_pid)" ]; then
     say "Backend already running (pid $(backend_pid))"
   else
@@ -48,8 +43,26 @@ cmd_start() {
     done
     [ -n "$(backend_pid)" ] || { tail -20 "$LOG"; die "backend failed to start"; }
   fi
+}
+
+# Restart only the backend (the sandbox keeps running). Ends agent terminals and browser sessions.
+cmd_restart_backend() {
+  local pid; pid=$(backend_pid)
+  if [ -n "$pid" ]; then say "Stopping backend ($pid)"; kill "$pid"; sleep 1; fi
+  rm -f "$PIDFILE"
+  start_backend
   cmd_status
-  say "Next: ./devicedock.sh open   (the session link works once per backend start)"
+}
+
+cmd_start() {
+  need_docker
+  docker image inspect $IMAGE >/dev/null 2>&1 || { say "Sandbox image missing, building"; npm run -s sandbox:build; }
+  [ -f dist/index.html ] || { say "Building frontend"; npm run -s build; }
+  say "Starting sandbox container"; npm run -s sandbox:start
+  end_stray_codex
+  start_backend
+  cmd_status
+  say "Next: ./devicedock.sh open   (mints a fresh one-time login link; use it whenever you are logged out, no restart needed)"
 }
 
 cmd_stop() {
@@ -97,6 +110,7 @@ case "${1:-}" in
   start)   cmd_start ;;
   stop)    cmd_stop ;;
   restart) cmd_stop; cmd_start ;;
+  restart-backend) cmd_restart_backend ;;
   status)  cmd_status ;;
   open)    [ -n "$(backend_pid)" ] || die "backend not running"; npm run -s open ;;
   logs)    tail -n 50 -f "$LOG" ;;
@@ -104,5 +118,5 @@ case "${1:-}" in
   build)   cmd_build ;;
   test)    npm run -s typecheck && npm test ;;
   clean)   cmd_clean ;;
-  *) echo "usage: $0 {start|stop|restart|status|open|logs|login <codex|claude|opencode>|build|test|clean}"; exit 1 ;;
+  *) echo "usage: $0 {start|stop|restart|restart-backend|status|open|logs|login <codex|claude|opencode>|build|test|clean}"; exit 1 ;;
 esac

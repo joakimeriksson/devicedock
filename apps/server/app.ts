@@ -24,6 +24,9 @@ export function createApp({
   port = 47831,
   bootstrap = randomBytes(32).toString("hex"),
   test = false,
+  // Authorises POST /admin/session-link (a fresh one-time login link without restarting). Never the bridge
+  // token: that one is shared with the container, this one stays on the Mac. Unset = endpoint disabled.
+  adminToken = undefined as string | undefined,
 } = {}) {
   // Cookies are not isolated by port, so another local instance would overwrite a shared name.
   const cookieName = `dock_${port}`;
@@ -33,7 +36,19 @@ export function createApp({
     server = createServer(app),
     broker = new Broker(),
     terminals = new Terminals();
-  let unused = true;
+  // One-time login tokens: the startup token (no expiry) plus renewals minted by the admin endpoint (5 min).
+  const bootstraps = new Map<string, number>([[bootstrap, Infinity]]);
+  const consumeBootstrap = (token: string) => {
+    const now = Date.now();
+    let match: string | undefined;
+    for (const [t, exp] of [...bootstraps]) {
+      if (exp <= now) bootstraps.delete(t);
+      else if (equal(token, t)) match = t;
+    }
+    if (match === undefined) return false;
+    bootstraps.delete(match);
+    return true;
+  };
   const sessions = new Map<string, { csrf: string; expires: number }>();
   app.disable("x-powered-by");
   app.use((req, res, next) => {
@@ -61,15 +76,13 @@ export function createApp({
   app.post("/api/session", (req, res) => {
     if (
       req.headers.origin !== origin ||
-      !unused ||
       typeof req.body?.token !== "string" ||
-      !equal(req.body.token, bootstrap)
+      !consumeBootstrap(req.body.token)
     )
       return res.status(403).json({
         error:
-          "Invalid or used session link. Restart the backend for a new link.",
+          "Invalid, expired or used session link. Run ./devicedock.sh open for a new one.",
       });
-    unused = false;
     const key = randomBytes(32).toString("hex"),
       csrf = randomBytes(32).toString("hex");
     sessions.set(key, { csrf, expires: Date.now() + 12 * 60 * 60 * 1000 });
@@ -78,6 +91,18 @@ export function createApp({
       `${cookieName}=${key}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`,
     );
     res.json({ csrf });
+  });
+  // Mint a fresh one-time login link for a running backend, so an expired session never needs a restart.
+  // Not for browsers: any Origin is refused, and the caller must present the admin token from .runtime/.
+  app.post("/admin/session-link", (req, res) => {
+    if (!adminToken || req.headers.origin !== undefined) return res.status(403).end();
+    if (!equal(req.headers.authorization ?? "", `Bearer ${adminToken}`)) return res.status(403).end();
+    const now = Date.now();
+    for (const [t, exp] of [...bootstraps]) if (exp <= now) bootstraps.delete(t);
+    if (bootstraps.size >= 5) return res.status(429).json({ error: "Too many unused login links" });
+    const token = randomBytes(32).toString("hex");
+    bootstraps.set(token, now + 5 * 60 * 1000);
+    res.json({ url: `${origin}/#token=${token}`, expiresInSeconds: 300 });
   });
   app.use("/api", (req, res, next) => {
     const s = session(req.headers.cookie);
