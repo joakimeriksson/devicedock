@@ -42,7 +42,7 @@ export function createApp({
       "Referrer-Policy": "no-referrer",
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy":
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://" +
+        "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://" +
         host +
         "; frame-ancestors 'none'; base-uri 'none'",
     });

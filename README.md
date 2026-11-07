@@ -175,3 +175,9 @@ The page has a light and a dark theme. The **Auto / Light / Dark** switch in the
 by default and remembers an explicit choice in the browser. All colours are CSS variables in `apps/web/src/style.css`
 (`:root[data-theme="dark"|"light"]`); the terminals switch palette live. `public/theme-init.js` sets the theme before
 first paint (an external file because the CSP forbids inline scripts).
+
+## Simulated devices
+A simulated board appears as a normal device (kind `sim`, labelled `simulated` in `device list`). The first engine is
+esp32sim (WebAssembly): `tools/sim/install-esp32sim.sh /path/to/esp32sim` installs a built copy and a T-Display
+profile, then `npm run build`; the page offers **＋ Simulated ttgo-tdisplay**.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for how to add another simulator and for the current limits.

@@ -13,6 +13,11 @@ import {
 } from "./adapters";
 import { Terminal, type TerminalKind } from "./Terminal";
 import { useTheme, type ThemePref } from "./theme";
+import "./sim/engines";
+import { SimAdapter } from "./sim/SimAdapter";
+import { SimDisplay } from "./sim/SimDisplay";
+import { loadProfiles } from "./sim/registry";
+import type { SimProfile } from "./sim/types";
 import "./style.css";
 type Row = Descriptor & {
   adapter: DeviceAdapter;
@@ -49,6 +54,7 @@ function saveRemembered(m: Record<string, number>) {
     localStorage.setItem(REMEMBER_KEY, JSON.stringify(m));
   } catch {}
 }
+const simAdapter = new SimAdapter();
 const mock = new MockAdapter(),
   serial = new WebSerialAdapter();
 function App() {
@@ -70,7 +76,8 @@ function App() {
     [fail, setFail] = useState(false),
     [agent, setAgent] = useState<Exclude<TerminalKind, "shell">>("codex"),
     [now, setNow] = useState(Date.now()),
-    [remembered, setRememberedState] = useState(loadRemembered);
+    [remembered, setRememberedState] = useState(loadRemembered),
+    [simProfiles, setSimProfiles] = useState<SimProfile[]>([]);
   const themeCtl = useTheme();
   const rememberedRef = useRef(remembered),
     autoShareRef = useRef<() => Promise<void>>(async () => {}),
@@ -225,6 +232,9 @@ function App() {
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80)
       el.scrollTop = el.scrollHeight;
   }, [logs]);
+  useEffect(() => {
+    void loadProfiles().then(setSimProfiles);
+  }, []);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
@@ -616,6 +626,19 @@ function App() {
                 >
                   Granted ports
                 </button>
+                {simProfiles.map((p) => (
+                  <button
+                    key={p.id}
+                    title={p.description}
+                    onClick={() =>
+                      run(async () => {
+                        await add(simAdapter, simAdapter.create(p));
+                      })
+                    }
+                  >
+                    ＋ Simulated {p.board}
+                  </button>
+                ))}
               </div>
               <label className="baud">
                 Baud rate{" "}
@@ -695,6 +718,9 @@ function App() {
                       </button>
                     )}
                   </div>
+                  {row.kind === "sim" && row.open && row.adapter instanceof SimAdapter && (
+                    <SimDisplay adapter={row.adapter} id={row.id} />
+                  )}
                   {isPhysical(row.kind) && (
                     <label>
                       <input

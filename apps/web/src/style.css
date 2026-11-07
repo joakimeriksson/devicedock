@@ -592,3 +592,13 @@ footer {
 .terminal-body .xterm-scrollable-element {
   background-color: var(--terminal-bg) !important;
 }
+
+.sim-display { margin: 10px 0; }
+.sim-display canvas {
+  display: block;
+  max-width: 100%;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  image-rendering: pixelated;
+}
