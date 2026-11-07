@@ -169,3 +169,9 @@ as neutral, so a gap between the two lets the chip boot normally ("Wrong boot mo
 RFC 2217 client waits for each acknowledgement in 50 ms steps, so the two changes arrive ~52 ms apart. The
 server therefore merges DTR/RTS changes over an 80 ms trailing-edge window and applies them as one operation
 (`tests/rfc2217/run.sh` checks this, including esptool's reset cycle `-R` -> `D-` -> `--`).
+
+## Theme
+The page has a light and a dark theme. The **Auto / Light / Dark** switch in the header follows the system setting
+by default and remembers an explicit choice in the browser. All colours are CSS variables in `apps/web/src/style.css`
+(`:root[data-theme="dark"|"light"]`); the terminals switch palette live. `public/theme-init.js` sets the theme before
+first paint (an external file because the CSP forbids inline scripts).

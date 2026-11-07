@@ -2,6 +2,35 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { useThemeName } from "./theme";
+
+// Dark keeps xterm's default ANSI palette; light needs darker colours or bright yellow/cyan vanish on white.
+const TERM_THEMES = {
+  dark: { background: "#0c131b", foreground: "#dce8ef", cursor: "#75e6bb" },
+  light: {
+    background: "#fafbfc",
+    foreground: "#1f2933",
+    cursor: "#0d7a56",
+    cursorAccent: "#fafbfc",
+    selectionBackground: "#bfd4e6",
+    black: "#1f2933",
+    red: "#c0392b",
+    green: "#1e7e45",
+    yellow: "#8a6100",
+    blue: "#1f5fbf",
+    magenta: "#9b3fa6",
+    cyan: "#0e6f80",
+    white: "#5b6b78",
+    brightBlack: "#6b7a87",
+    brightRed: "#d84a3a",
+    brightGreen: "#2a9455",
+    brightYellow: "#a06f00",
+    brightBlue: "#3573d6",
+    brightMagenta: "#b552c0",
+    brightCyan: "#1a8fa3",
+    brightWhite: "#2d3a45",
+  },
+} as const;
 export type TerminalKind = "shell" | "codex" | "claude" | "opencode";
 export const agentLabels: Record<Exclude<TerminalKind, "shell">, string> = {
   codex: "Codex",
@@ -18,6 +47,10 @@ export function Terminal({
   onKind?: (kind: Exclude<TerminalKind, "shell">) => void;
 }) {
   const element = useRef<HTMLDivElement>(null);
+  const themeName = useThemeName();
+  const termRef = useRef<XTerm | null>(null);
+  const themeRef = useRef(themeName);
+  themeRef.current = themeName;
   const [revision, setRevision] = useState(0),
     [status, setStatus] = useState("Connecting");
   useEffect(() => {
@@ -26,12 +59,9 @@ export function Terminal({
       fontSize: 13,
       fontFamily: "SFMono-Regular, Menlo, monospace",
       scrollback: 2000,
-      theme: {
-        background: "#0c131b",
-        foreground: "#dce8ef",
-        cursor: "#75e6bb",
-      },
+      theme: { ...TERM_THEMES[themeRef.current] },
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(element.current!);
@@ -113,6 +143,10 @@ export function Terminal({
       term.dispose();
     };
   }, [kind, csrf, revision]);
+  // Switch the live terminal's colours when the theme changes (no restart, scrollback is kept).
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = { ...TERM_THEMES[themeName] };
+  }, [themeName]);
   return (
     <section className="terminal panel">
       <header>

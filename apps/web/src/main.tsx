@@ -13,6 +13,7 @@ import {
   type DeviceAdapter,
 } from "./adapters";
 import { Terminal, type TerminalKind } from "./Terminal";
+import { useTheme, type ThemePref } from "./theme";
 import "./style.css";
 type Row = Descriptor & {
   adapter: DeviceAdapter;
@@ -71,6 +72,7 @@ function App() {
     [agent, setAgent] = useState<Exclude<TerminalKind, "shell">>("codex"),
     [now, setNow] = useState(Date.now()),
     [remembered, setRememberedState] = useState(loadRemembered);
+  const themeCtl = useTheme();
   const rememberedRef = useRef(remembered),
     autoShareRef = useRef<() => Promise<void>>(async () => {}),
     autoSharing = useRef(false);
@@ -502,10 +504,30 @@ function App() {
           <b>DeviceDock</b>
           <span className="tag">LOCAL WORKSPACE</span>
         </div>
-        <span className={connected ? "status online" : "status"}>
-          <i className="dot" />
-          {connected ? "Browser bridge online" : "Bridge offline"}
-        </span>
+        <div className="topbar-right">
+          <div className="theme-switch" role="group" aria-label="Colour theme">
+            {(["system", "light", "dark"] as ThemePref[]).map((p) => (
+              <button
+                key={p}
+                aria-pressed={themeCtl.pref === p}
+                title={
+                  p === "system"
+                    ? "Follow the system setting"
+                    : p === "light"
+                      ? "Light theme"
+                      : "Dark theme"
+                }
+                onClick={() => themeCtl.choose(p)}
+              >
+                {p === "system" ? "Auto" : p === "light" ? "Light" : "Dark"}
+              </button>
+            ))}
+          </div>
+          <span className={connected ? "status online" : "status"}>
+            <i className="dot" />
+            {connected ? "Browser bridge online" : "Bridge offline"}
+          </span>
+        </div>
       </header>
       <main>
         <div className="intro">
