@@ -12,6 +12,7 @@ docker run --rm --entrypoint sh -e FAIL_FIRST_RELEASE="$2" -v "$PWD:/src:ro" dev
 '
 }
 run test.py 0
+run test_multi.py 0
 run test_replace.py 0
 run test_replace.py 1
 # Scenario 4: DTR/RTS pairs must be applied atomically (single serial.signals op with both lines).
@@ -20,7 +21,7 @@ docker run --rm --entrypoint sh -v "$PWD:/src:ro" devicedock-sandbox:local -c '
   for i in 1 2 3 4 5 6 7 8 9 10; do [ -f /tmp/dev.log ] && grep -q READY /tmp/dev.log && break; sleep 1; done
   python /src/tests/rfc2217/test_atomic.py >/dev/null
   # After the session started, every DTR/RTS change must carry both fields in one op.
-  if grep "^OP serial.signals" /tmp/dev.log | grep -q "dataTerminalReady.*requestToSend" ; then
-    echo "ATOMIC OK: $(grep "^OP serial.signals" /tmp/dev.log | grep -c "dataTerminalReady.*requestToSend") combined signal ops, $(grep "^OP serial.signals" /tmp/dev.log | grep -vc "dataTerminalReady.*requestToSend") single-line ops"
-  else echo "ATOMIC FAIL: DTR and RTS applied separately"; grep "^OP serial.signals" /tmp/dev.log; exit 1; fi
+  if grep "^OP [a-z-]* serial.signals" /tmp/dev.log | grep -q "dataTerminalReady.*requestToSend" ; then
+    echo "ATOMIC OK: $(grep "^OP [a-z-]* serial.signals" /tmp/dev.log | grep -c "dataTerminalReady.*requestToSend") combined signal ops, $(grep "^OP [a-z-]* serial.signals" /tmp/dev.log | grep -vc "dataTerminalReady.*requestToSend") single-line ops"
+  else echo "ATOMIC FAIL: DTR and RTS applied separately"; grep "^OP [a-z-]* serial.signals" /tmp/dev.log; exit 1; fi
 '

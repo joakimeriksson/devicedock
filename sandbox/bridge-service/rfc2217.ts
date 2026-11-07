@@ -3,6 +3,7 @@
 // It translates baud/DTR/RTS/data into the same lease + bridge operations every other client uses, so
 // approvals and "autonomous mode" are enforced by the Mac-side broker, not here.
 import { createServer, type Socket, type Server } from "node:net";
+import { orderDevices, RFC2217_PORT_BASE, RFC2217_SLOTS } from "../../packages/protocol/index.ts";
 
 export type Dev = { id: string; generation: number; name: string; kind: string; baudRate: number };
 export interface Api {
@@ -89,30 +90,35 @@ export class TelnetParser {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = console.error): Server {
-  // A new connection replaces the previous session instead of being refused: tools such as esptool
-  // reconnect after a failed attempt, and the dead session must not block them.
-  let current: { socket: Socket; done: Promise<void> } | undefined;
-  // Lease this server still holds because its release failed (e.g. the device was busy with a
-  // pending approval). The client id is shared, so a later session may release it itself.
-  let held: { device: Dev; lease: string } | undefined;
+export function startRfc2217(api: Api, port = RFC2217_PORT_BASE, host = "127.0.0.1", log = console.error, slots = RFC2217_SLOTS): Server[] {
+  // A new connection replaces the previous session on the same port instead of being refused: tools such as
+  // esptool reconnect after a failed attempt, and the dead session must not block them.
+  const current = new Map<number, { socket: Socket; done: Promise<void> }>();
+  // Leases this server still holds because a release failed (e.g. the device was busy with a pending
+  // approval), by device id. The client id is shared, so a later session may release them itself.
+  const held = new Map<string, { device: Dev; lease: string }>();
   let queue: Promise<unknown> = Promise.resolve();
-  const server = createServer((socket: Socket) => {
-    queue = queue.then(async () => {
-      if (current) {
-        log("rfc2217: new connection replaces the previous session");
-        current.socket.destroy();
-        await Promise.race([current.done, sleep(5000)]);
-      }
-      const done = session(socket);
-      current = { socket, done };
-      void done.finally(() => {
-        if (current?.socket === socket) current = undefined;
+  const servers = Array.from({ length: slots }, (_, slot) => {
+    const server = createServer((socket: Socket) => {
+      queue = queue.then(async () => {
+        const prev = current.get(slot);
+        if (prev) {
+          log(`rfc2217: new connection on port ${port + slot} replaces the previous session`);
+          prev.socket.destroy();
+          await Promise.race([prev.done, sleep(5000)]);
+        }
+        const done = session(socket, slot);
+        current.set(slot, { socket, done });
+        void done.finally(() => {
+          if (current.get(slot)?.socket === socket) current.delete(slot);
+        });
       });
     });
+    server.on("error", (e) => log(`rfc2217: port ${port + slot}: ${(e as Error).message}`));
+    return server;
   });
 
-  async function session(socket: Socket) {
+  async function session(socket: Socket, slot: number) {
     socket.setNoDelay(true);
     let open = true;
     const end = () => {
@@ -262,8 +268,13 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
     // lets go (our own stale lease is released first; another client's expires within 30 s).
     const attach = (async () => {
       const devices = await api.list();
-      const d = devices.find((x) => x.kind === "serial") ?? devices[0];
-      if (!d) throw Error("no shared device (share one in the browser, then check `device list`)");
+      const d = orderDevices(devices)[slot];
+      if (!d)
+        throw Error(
+          devices.length
+            ? `port ${port + slot} has no device (only ${devices.length} shared; see rfc2217 URLs in \`device list\`)`
+            : "no shared device (share one in the browser, then check `device list`)",
+        );
       for (let i = 0; i < 70; i++) {
         if (!open) throw Error("client went away before the device was free");
         try {
@@ -273,10 +284,11 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
           const msg = (e as Error).message;
           if (!/already leased/i.test(msg) || i === 69) throw e;
           if (i === 0) log("rfc2217: device is leased; waiting for it to be released");
-          if (held && held.device.id === d.id) {
+          const stale = held.get(d.id);
+          if (stale) {
             try {
-              await api.call("serial.release", held.device, {}, held.lease);
-              held = undefined;
+              await api.call("serial.release", stale.device, {}, stale.lease);
+              held.delete(d.id);
               continue;
             } catch {}
           }
@@ -284,7 +296,7 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
         }
       }
       device = d;
-      held = { device: d, lease: lease! };
+      held.set(d.id, { device: d, lease: lease! });
       applied.baudRate = d.baudRate || 115200;
     })();
     chain = attach.then(() => {}, () => {});
@@ -340,7 +352,7 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
       if (lease) {
         try {
           await api.call("serial.release", device, {}, lease);
-          if (held?.lease === lease) held = undefined;
+          if (held.get(device.id)?.lease === lease) held.delete(device.id);
         } catch {
           // keep `held`: the next session releases it (the broker may still be busy with an operation)
         }
@@ -348,6 +360,7 @@ export function startRfc2217(api: Api, port = 2217, host = "127.0.0.1", log = co
     }
   }
 
-  server.listen(port, host, () => log(`RFC 2217 serial server on ${host}:${port}`));
-  return server;
+  servers.forEach((server, slot) => server.listen(port + slot, host));
+  log(`RFC 2217 serial servers on ${host}:${port}-${port + slots - 1} (device N is on port ${port}+N, see \`device list\`)`);
+  return servers;
 }

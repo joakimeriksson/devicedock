@@ -1,12 +1,33 @@
 import { DeviceClient } from "./index.ts";
-import { hexBytes } from "../protocol/index.ts";
+import { hexBytes, orderDevices, rfc2217Url } from "../protocol/index.ts";
 const [cmd, id, ...flags] = process.argv.slice(2);
 const value = (key: string) => flags[flags.indexOf(key) + 1];
+// Stop cleanly on Ctrl-C / SIGTERM so the lease is released (a killed client otherwise leaves it held for 30 s,
+// and the next command fails with "Device already leased").
+let stopping = false;
+for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => (stopping = true));
+const seconds = (key: string) => {
+  const v = value(key);
+  const n = Number(v);
+  if (!(n > 0) || n > 3600) throw Error(`${key} needs a number of seconds between 0 and 3600`);
+  return n;
+};
+/** Print what the board sends for `ms` milliseconds (or until Ctrl-C), inside the caller's lease. */
+async function readFor(client: DeviceClient, d: Parameters<DeviceClient["call"]>[1], lease: string, ms: number) {
+  const end = Date.now() + ms;
+  while (!stopping && Date.now() < end) {
+    const r = (await client.call("serial.read", d, { maxBytes: 16384 }, lease)) as { data: string };
+    if (r.data) process.stdout.write(Buffer.from(r.data, "base64"));
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 try {
   const client = new DeviceClient();
   const devices = await client.list();
   if (cmd === "list") {
-    console.log(JSON.stringify(devices, null, 2));
+    // Same order as the RFC 2217 ports: the Nth device here is on port 2217+N. Use its `rfc2217` URL for esptool,
+    // pyserial, mpremote and PlatformIO (real hardware first, then simulators).
+    console.log(JSON.stringify(orderDevices(devices).map((d, i) => ({ ...d, rfc2217: rfc2217Url(i) })), null, 2));
   } else {
     const d = devices.find((d) => d.id === id);
     if (!d) throw Error("Device not exposed; run device list");
@@ -18,12 +39,16 @@ try {
             ? Buffer.from(value("--text"))
             : undefined;
         if (!data) throw Error("Use --text or --hex");
+        // --text sends the characters as given: use \r for Enter on a REPL. --read N then prints the reply for N
+        // seconds within the SAME lease; without it the reply is lost, because the lease's read queue ends with it.
+        const wait = flags.includes("--read") ? seconds("--read") : 0;
         await client.call(
           "serial.write",
           d,
           { data: data.toString("base64") },
           lease,
         );
+        if (wait) await readFor(client, d, lease, wait * 1000);
       } else if (cmd === "connect" || cmd === "configure")
         await client.call(
           cmd === "connect" ? "serial.connect" : "serial.configure",
@@ -54,19 +79,12 @@ try {
           lease,
         );
       } else if (cmd === "monitor") {
-        while (true) {
-          const r = (await client.call(
-            "serial.read",
-            d,
-            { maxBytes: 16384 },
-            lease,
-          )) as { data: string };
-          process.stdout.write(Buffer.from(r.data, "base64"));
-          await new Promise((r) => setTimeout(r, 100));
-        }
+        // Runs until Ctrl-C, or for --seconds N. It holds the device exclusively: nothing else (another
+        // `device send`, esptool on the RFC 2217 port) can talk to the board meanwhile.
+        await readFor(client, d, lease, flags.includes("--seconds") ? seconds("--seconds") * 1000 : Infinity);
       } else
         throw Error(
-          "Commands: list, connect, configure, send, signals, monitor, disconnect",
+          "Commands: list, connect, configure, send (--text|--hex [--read SECONDS]), signals, monitor [--seconds N], disconnect",
         );
     });
   }

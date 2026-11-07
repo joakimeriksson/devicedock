@@ -86,6 +86,19 @@ export type Request = z.infer<typeof request>;
  *    physical can be affected, so approvals may be waived and the hardware warning is not shown.
  * Add a new simulator by writing a SimEngine, not a new kind: give it kind "sim" and set `engine`/`board`.
  */
+export const RFC2217_PORT_BASE = 2217;
+export const RFC2217_SLOTS = 8;
+/**
+ * The order that decides which device answers on which RFC 2217 port: real hardware first, then software devices,
+ * each group in the order they were shared. Port 2217 is therefore the first physical device whenever there is one
+ * (existing tool invocations keep working); port 2217+N is the Nth device in this order. `device list` prints the
+ * same order and each device's URL, so tools never have to guess.
+ */
+export function orderDevices<T extends { kind: string }>(devices: T[]): T[] {
+  return [...devices.filter((d) => d.kind === "serial"), ...devices.filter((d) => d.kind !== "serial")];
+}
+export const rfc2217Url = (index: number) => `rfc2217://127.0.0.1:${RFC2217_PORT_BASE + index}`;
+
 export const DEVICE_KINDS = ["serial", "mock", "sim"] as const;
 export type DeviceKind = (typeof DEVICE_KINDS)[number];
 export const isPhysical = (kind: DeviceKind) => kind === "serial";

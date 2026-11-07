@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { readFileSync, copyFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { syncInstructions } from "./instructions.ts";
 import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import { request, response } from "../../packages/protocol/index.ts";
@@ -143,12 +144,12 @@ const lazyApi: Api = {
 };
 startRfc2217(lazyApi, 2217, "127.0.0.1");
 
-// Seed agent instructions into the workspace volume (never overwrite the user's own versions).
+// Keep DeviceDock's section of the agent instructions current in the workspace (see instructions.ts): the user's
+// own text in AGENTS.md / CLAUDE.md is never touched.
 for (const f of ["AGENTS.md", "CLAUDE.md"]) {
   try {
-    if (!existsSync(`/workspace/${f}`))
-      copyFileSync(`/opt/devicedock/sandbox/${f}`, `/workspace/${f}`);
+    syncInstructions(`/workspace/${f}`, "/opt/devicedock/sandbox/AGENTS.md");
   } catch (e) {
-    console.error(`Could not seed ${f}: ${(e as Error).message}`);
+    console.error(`Could not update ${f}: ${(e as Error).message}`);
   }
 }
