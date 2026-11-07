@@ -64,8 +64,9 @@ function App() {
     [connected, setConnected] = useState(false),
     [rows, setRows] = useState<Row[]>([]),
     [logs, setLogs] = useState<
-      { bytes: Uint8Array; text: string; hex: string; direction: string }[]
+      { bytes: Uint8Array; text: string; hex: string; direction: string; deviceId: string; deviceName: string }[]
     >([]),
+    [monitorDevice, setMonitorDevice] = useState<string>("all"),
     [monitorMode, setMonitorMode] = useState<"text" | "chunks">("text"),
     [copied, setCopied] = useState<"" | "ok" | "failed">(""),
     [approvals, setApprovals] = useState<Rpc[]>([]),
@@ -116,20 +117,28 @@ function App() {
   };
   // Text mode joins consecutive chunks of one direction into a continuous stream (decoded once, so a
   // multi-byte character split across chunks stays intact); chunk mode keeps one row per received piece.
+  // Unique, readable device names (two boards with the same name get a short id suffix).
+  function deviceLabel(id: string, name: string) {
+    const same = rows.filter((r) => r.name === name).length > 1;
+    return same ? `${name} (${id.slice(0, 4)})` : name;
+  }
   function monitorBlocks() {
+    const shown = monitorDevice === "all" ? logs : logs.filter((l) => l.deviceId === monitorDevice);
+    // Name a block's device only when several devices are mixed in this view.
+    const mixed = new Set(shown.map((l) => l.deviceId)).size > 1;
+    const tag = (l: { deviceId: string; deviceName: string }) => (mixed ? deviceLabel(l.deviceId, l.deviceName) : "");
     if (monitorMode === "chunks")
-      return logs.map((l) => ({
-        direction: l.direction,
-        text: hex ? l.hex : l.text,
-      }));
-    const blocks: { direction: string; bytes: number[] }[] = [];
-    for (const l of logs) {
+      return shown.map((l) => ({ direction: l.direction, tag: tag(l), text: hex ? l.hex : l.text }));
+    const blocks: { direction: string; deviceId: string; tag: string; bytes: number[] }[] = [];
+    for (const l of shown) {
       const last = blocks.at(-1);
-      if (last && last.direction === l.direction) last.bytes.push(...l.bytes);
-      else blocks.push({ direction: l.direction, bytes: [...l.bytes] });
+      // Text is merged only within one device and direction: never across devices.
+      if (last && last.direction === l.direction && last.deviceId === l.deviceId) last.bytes.push(...l.bytes);
+      else blocks.push({ direction: l.direction, deviceId: l.deviceId, tag: tag(l), bytes: [...l.bytes] });
     }
     return blocks.map((b) => ({
       direction: b.direction,
+      tag: b.tag,
       text: hex
         ? b.bytes.map((x) => x.toString(16).padStart(2, "0")).join(" ")
         : new TextDecoder().decode(Uint8Array.from(b.bytes)),
@@ -138,7 +147,7 @@ function App() {
   async function copyMonitor() {
     // Exactly what is shown, without the RX/TX badges.
     const out = monitorBlocks()
-      .map((b) => b.text)
+      .map((b) => (b.tag ? `[${b.tag}] ` : "") + b.text)
       .reduce((acc, t) => acc + (acc && !acc.endsWith("\n") ? "\n" : "") + t, "");
     // execCommand("copy") is synchronous inside the click and does not depend on focus/permission prompts;
     // navigator.clipboard can stay pending in some contexts, so it is the fallback and is time-limited.
@@ -166,18 +175,27 @@ function App() {
     setCopied(ok ? "ok" : "failed");
     setTimeout(() => setCopied(""), 2000);
   }
-  function log(bytes: Uint8Array, direction: string) {
-    setLogs((old) =>
-      [
+  function log(bytes: Uint8Array, direction: string, device: { id: string; name: string }) {
+    setLogs((old) => {
+      const next = [
         ...old,
         {
           bytes,
           text: new TextDecoder().decode(bytes),
           hex: [...bytes].map((b) => b.toString(16).padStart(2, "0")).join(" "),
           direction,
+          deviceId: device.id,
+          deviceName: device.name,
         },
-      ].slice(-1000),
-    );
+      ];
+      // Keep the last 1000 chunks PER DEVICE, so a chatty device cannot push another one's history out.
+      let mine = 0;
+      for (const l of next) if (l.deviceId === device.id) mine++;
+      if (mine <= 1000) return next;
+      const drop = mine - 1000;
+      let dropped = 0;
+      return next.filter((l) => !(l.deviceId === device.id && dropped++ < drop));
+    });
   }
   async function rpc(
     op: string,
@@ -320,11 +338,11 @@ function App() {
           throw Error("Device revoked, stale, or deadline expired");
         if (r.op === "serial.write") {
           const bytes = decode(r.args.data as string);
-          log(bytes, "TX");
+          log(bytes, "TX", row);
           await row.adapter.write(row.id, bytes);
         } else if (r.op === "serial.signals") {
           await row.adapter.setSignals(row.id, r.args);
-          log(new TextEncoder().encode(JSON.stringify(r.args)), "SIGNALS");
+          log(new TextEncoder().encode(JSON.stringify(r.args)), "SIGNALS", row);
         } else if (r.op === "serial.disconnect") {
           await row.adapter.close(row.id);
           update((old) =>
@@ -405,7 +423,7 @@ function App() {
     adapter.subscribe(d.id, (event) => {
       const current = rowsRef.current.find((r) => r.id === d.id);
       if (event.type === "data") {
-        log(event.bytes, "RX");
+        log(event.bytes, "RX", d);
         if (current?.exposed)
           for (let offset = 0; offset < event.bytes.length; offset += 16384) {
             try {
@@ -873,6 +891,18 @@ function App() {
                 <span>Serial monitor</span>
                 <span className="monitor-actions">
                   <select
+                    aria-label="Monitor device"
+                    value={monitorDevice === "all" || rows.some((r) => r.id === monitorDevice) ? monitorDevice : "all"}
+                    onChange={(e) => setMonitorDevice(e.target.value)}
+                  >
+                    <option value="all">All devices</option>
+                    {rows.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {deviceLabel(r.id, r.name)}
+                      </option>
+                    ))}
+                  </select>
+                  <select
                     aria-label="Monitor mode"
                     value={monitorMode}
                     onChange={(e) =>
@@ -885,7 +915,13 @@ function App() {
                   <button onClick={() => void copyMonitor()}>
                     {copied === "ok" ? "Copied" : copied === "failed" ? "Copy failed" : "Copy"}
                   </button>
-                  <button onClick={() => setLogs([])}>Clear</button>
+                  <button
+                    onClick={() =>
+                      setLogs((old) => (monitorDevice === "all" ? [] : old.filter((l) => l.deviceId !== monitorDevice)))
+                    }
+                  >
+                    Clear
+                  </button>
                 </span>
               </header>
               <div
@@ -902,11 +938,12 @@ function App() {
                       >
                         {b.direction}
                       </span>
+                      {b.tag && <span className="dev-chip">{b.tag}</span>}
                       <pre>{b.text}</pre>
                     </div>
                   ))
                 ) : (
-                  <p>Waiting for bytes…</p>
+                  <p>{monitorDevice === "all" ? "Waiting for bytes…" : "Nothing from this device yet…"}</p>
                 )}
               </div>
               <div className="composer">
