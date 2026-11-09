@@ -2,7 +2,25 @@
 
 A local browser workspace that connects an isolated Linux coding sandbox to browser-owned serial ports. React and xterm.js provide two real Docker terminals; WebSerial and a browser mock share one device protocol, lease manager, and human approval path.
 
-**Status: implementation under verification.** The user has installed dependencies and successfully built the Docker image. Strict typechecking, the production frontend build, and 14 unit/in-process tests pass with the installed dependencies. The first-container startup bug is fixed. This task's execution sandbox still blocks Docker access and localhost listeners, so container startup and the browser-to-container demonstration need verification from the normal Mac terminal. See [VERIFICATION.md](VERIFICATION.md).
+![DeviceDock: shared devices on the left, the agent and Linux terminals on the right](docs/screenshot.png)
+
+**New here? Read [QUICKSTART.md](QUICKSTART.md).** Five minutes of reading, one command to start (`./devicedock.sh`),
+and a worked example that flashes Contiki-NG onto a TI LaunchPad through the browser.
+
+**What works today** (verified on real hardware):
+- ESP32 over a shared serial port: esptool enters the bootloader through the bridge (ESP32-D0WDQ6-V3, 2026-11-07).
+- TI LaunchPad (CC1352R1) through its XDS110 debug probe over WebUSB: OpenOCD in the sandbox reads, flashes and
+  verifies the chip, and the firmware's serial output reaches the sandbox (2026-11-09). About 3 KiB/s.
+- Simulated ESP32 boards (esp32sim) as ordinary devices.
+
+Agents in the sandbox get their instructions from [sandbox/AGENTS.md](sandbox/AGENTS.md) (copied to `/workspace`).
+The sections below are the full reference.
+
+## Control script
+
+`./devicedock.sh` (no arguments) starts everything and opens an interactive console with live status and restart
+commands; see [QUICKSTART.md](QUICKSTART.md#2-start-everything). One-shot forms also work:
+`./devicedock.sh start|stop|restart|restart-backend|status|open|logs|login <agent>|build|test|clean`.
 
 ## Setup on the Mac
 
@@ -142,7 +160,7 @@ To deliberately erase stored agent credentials and the container home, first rem
 - **Timeout:** do not retry a write automatically. Hardware may already have received it; inspect its state first.
 - **Revocation:** stops new operations and rejects pending replies; it cannot undo bytes already handed to the browser/OS or device.
 - **Browser reload:** devices become private; grant/expose again. Terminals reconnect automatically, preserving processes for up to 30 seconds. Use Restart for exited sessions.
-- **WebUSB/WebHID:** future transport-specific adapters. Raw USB transfers and HID reports require separate schemas and are not treated as serial.
+- **WebUSB/WebHID:** used only for CMSIS-DAP debug probes (see QUICKSTART.md and sandbox/AGENTS.md section 7). Probe traffic has its own operations and approval; it is never treated as serial.
 
 See [SECURITY.md](SECURITY.md) for threat boundaries and [PLAN.md](PLAN.md) for the original acceptance criteria.
 

@@ -8,7 +8,7 @@ import { orderDevices, RFC2217_PORT_BASE, RFC2217_SLOTS } from "../../packages/p
 export type Dev = { id: string; generation: number; name: string; kind: string; baudRate: number };
 export interface Api {
   list(): Promise<Dev[]>;
-  call(op: string, device?: Dev, args?: Record<string, unknown>, lease?: string): Promise<unknown>;
+  call(op: string, device?: Dev, args?: Record<string, unknown>, lease?: string, timeoutMs?: number): Promise<unknown>;
 }
 
 const IAC = 255, DONT = 254, DO = 253, WONT = 252, WILL = 251, SB = 250, SE = 240;

@@ -17,12 +17,16 @@ type Device = DeviceDescriptor & {
   buffer: Buffer;
   overflow: boolean;
   busy: boolean;
+  /** Debug probes: the approved session, ended by idle time, probe.close, the owner's cut-off or a revoke. */
+  probeSession?: { until: number };
 };
+/** A probe session lapses after this long without a transfer (OpenOCD runs come and go within one session). */
+export const PROBE_IDLE_MS = 10 * 60 * 1000;
 type Pending = {
   deviceId: string;
   generation: number;
   client: string;
-  resolve: () => void;
+  resolve: (data?: string) => void;
   reject: (e: Error) => void;
   timer: ReturnType<typeof setTimeout>;
   stage: "approval" | "operation";
@@ -106,13 +110,27 @@ export class Broker {
       } else if (!d.overflow) d.buffer = Buffer.concat([d.buffer, bytes]);
     }
   }
-  private finish(id: string, error?: Error) {
+  private finish(id: string, error?: Error, data?: string) {
     const p = this.pending.get(id);
     if (!p) return;
     clearTimeout(p.timer);
     this.pending.delete(id);
     if (error) p.reject(error);
-    else p.resolve();
+    else p.resolve(data);
+  }
+  private probeActive(d: Device) {
+    return !!d.probeSession && d.probeSession.until > this.now();
+  }
+  /** Ends a probe session and tells the page (its indicator goes away). */
+  private endProbeSession(d: Device) {
+    if (!d.probeSession) return;
+    d.probeSession = undefined;
+    d.send({ type: "probe-session", deviceId: d.id, active: false });
+  }
+  /** The owner cut the session off in the page; transfers fail from now on until a new probe.open is approved. */
+  endProbe(owner: string, id: string) {
+    const d = this.devices.get(id);
+    if (d && d.owner === owner) this.endProbeSession(d);
   }
   approve(owner: string, id: string, allow: boolean) {
     const p = this.pending.get(id);
@@ -123,7 +141,7 @@ export class Broker {
     p.stage = "operation";
     p.device.send({ type: "operation", request: p.req });
   }
-  reply(owner: string, id: string, ok: boolean, error?: string) {
+  reply(owner: string, id: string, ok: boolean, error?: string, data?: string) {
     const p = this.pending.get(id);
     if (!p || p.stage !== "operation" || p.device.owner !== owner) return;
     this.finish(
@@ -133,6 +151,7 @@ export class Broker {
         : ok
           ? undefined
           : Error(error ?? "Device operation failed"),
+      ok ? data : undefined,
     );
   }
   private valid(p: Pending) {
@@ -192,6 +211,28 @@ export class Broker {
       d.buffer = Buffer.alloc(0);
       return {};
     }
+    const probeOp = r.op.startsWith("probe.");
+    if (probeOp !== (d.kind === "probe") && r.op !== "serial.read")
+      throw Error(probeOp ? "Not a debug probe" : "A debug probe has no serial port; use its OpenOCD endpoint");
+    if (r.op === "probe.close") {
+      this.endProbeSession(d);
+      return {};
+    }
+    // Transfers run only inside an approved session. Autonomous mode opens one without asking.
+    let quiet = false;
+    if (r.op === "probe.transfer" && !this.probeActive(d)) {
+      if (!this.autonomous(d)) throw Error("No approved probe session: run `device probe-open <id>` and approve it in the page");
+      d.probeSession = { until: now + PROBE_IDLE_MS };
+      d.send({ type: "probe-session", deviceId: d.id, active: true });
+    }
+    if (r.op === "probe.transfer") {
+      d.probeSession!.until = now + PROBE_IDLE_MS;
+      quiet = true;
+    }
+    if (r.op === "probe.open" && this.probeActive(d)) {
+      d.probeSession!.until = now + PROBE_IDLE_MS;
+      return { session: "active" };
+    }
     d.lease.expires = now + this.leaseMs;
     if (r.op === "serial.read") {
       if (d.overflow) {
@@ -206,8 +247,9 @@ export class Broker {
       throw Error("Too many pending requests");
     d.busy = true;
     try {
-      await new Promise<void>((resolve, reject) => {
-        const approval = source === "agent" && !this.autonomous(d);
+      const data = await new Promise<string | undefined>((resolve, reject) => {
+        // Approval is per operation, except DAP transfers: those were covered by approving the session.
+        const approval = source === "agent" && !quiet && !this.autonomous(d);
         const timer = setTimeout(
           () =>
             this.finish(
@@ -229,6 +271,12 @@ export class Broker {
         });
         d.send({ type: approval ? "approval" : "operation", request: r });
       });
+      if (r.op === "probe.transfer") return { data: data ?? "" };
+      if (r.op === "probe.open") {
+        d.probeSession = { until: this.now() + PROBE_IDLE_MS };
+        d.send({ type: "probe-session", deviceId: d.id, active: true });
+        return { session: "opened" };
+      }
       if (r.op === "serial.disconnect") this.revoke(d.owner, d.id);
       if (r.op === "serial.configure" || r.op === "serial.connect")
         d.baudRate = r.args.baudRate;

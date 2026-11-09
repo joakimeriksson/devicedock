@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DeviceDock control script: ./devicedock.sh {start|stop|restart|status|open|logs|login|build|test|clean}
+# DeviceDock control script: ./devicedock.sh {console (default)|start|stop|restart|status|open|logs|login|build|test|clean}
 set -euo pipefail
 cd "$(dirname "$0")"
 PORT="${PORT:-47831}"
@@ -106,7 +106,69 @@ cmd_clean() {
   say "Container removed. Volumes (devicedock-workspace, devicedock-home) kept."
 }
 
-case "${1:-}" in
+# ---- interactive console: starts everything, shows status, takes restart commands ----
+web_state() {
+  [ -f dist/index.html ] || { echo "not built"; return; }
+  local newer; newer=$(find apps/web/src packages -newer dist/index.html -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \) 2>/dev/null | grep -v node_modules | head -1)
+  [ -n "$newer" ] && echo "STALE (changed: $newer)" || echo "up to date"
+}
+image_state() {
+  docker image inspect $IMAGE >/dev/null 2>&1 || { echo "missing"; return; }
+  local img ctr; img=$(docker image inspect -f '{{.Id}}' $IMAGE); ctr=$(docker inspect -f '{{.Image}}' $CONTAINER 2>/dev/null || true)
+  [ -z "$ctr" ] || [ "$img" = "$ctr" ] && echo "ok" || echo "container uses an OLDER image (use: rs)"
+}
+console_status() {
+  local pid; pid=$(backend_pid)
+  printf '\n\033[1m── DeviceDock %s ──\033[0m\n' "$(date +%T)"
+  if [ -n "$pid" ]; then printf 'backend  : \033[32mrunning\033[0m pid %s  http://127.0.0.1:%s\n' "$pid" "$PORT"
+  else printf 'backend  : \033[31mstopped\033[0m\n'; fi
+  echo "web build: $(web_state)"
+  if docker info >/dev/null 2>&1; then
+    if sandbox_running; then printf 'sandbox  : \033[32mrunning\033[0m  image %s\n' "$(image_state)"
+      echo "devices  :"; docker exec $CONTAINER device list 2>&1 | sed 's/^/  /' | head -20
+    else printf 'sandbox  : \033[31mstopped\033[0m\n'; fi
+  else printf 'docker   : \033[31mNOT reachable\033[0m\n'; fi
+  local errs; errs=$(grep -iE 'error|fail' "$LOG" 2>/dev/null | tail -3 || true)
+  [ -n "$errs" ] && { echo "recent backend errors:"; echo "$errs" | sed 's/^/  /'; }
+  return 0
+}
+console_help() {
+  cat <<'H'
+commands:  s status   rb restart backend   rs recreate sandbox   w rebuild web   i rebuild image
+           o login link   l backend log   d device list   sh sandbox shell   t tests   login <codex|claude|opencode>
+           stop  stop everything   q quit (leave running)   x quit and stop everything   h help
+H
+}
+cmd_console() {
+  set +e  # a failing command must not end the console
+  ( cmd_start ) || say "start reported a problem; fix it and use the commands below"
+  console_help; console_status
+  local line
+  while printf '\n\033[1mdevicedock>\033[0m '; read -r line; do
+    case "$line" in
+      ""|s|status) console_status ;;
+      rb) ( cmd_restart_backend ) ;;
+      rs) printf 'Recreate the sandbox container? Agent terminals end; volumes are kept. [y/N] '; read -r a
+          [ "$a" = y ] && ( need_docker; npm run -s sandbox:clean; npm run -s sandbox:start; end_stray_codex ); console_status ;;
+      w)  npm run -s build && say "Web rebuilt: reload the DeviceDock page" ;;
+      i)  ( need_docker; npm run -s sandbox:build ) && say "Image built: use rs to recreate the sandbox from it" ;;
+      o)  npm run -s open ;;
+      l)  tail -n 30 "$LOG" ;;
+      d)  docker exec $CONTAINER device list ;;
+      sh) docker exec -it -w /workspace $CONTAINER bash -l ;;
+      t)  npm run -s typecheck && npm test ;;
+      login\ *) ( cmd_login "${line#login }" ) ;;
+      stop) ( cmd_stop ) ;;
+      x)  ( cmd_stop ); break ;;
+      q|quit|exit) say "Leaving everything running"; break ;;
+      h|help|\?) console_help ;;
+      *) echo "unknown command: $line (h for help)" ;;
+    esac
+  done
+}
+
+case "${1:-console}" in
+  console) cmd_console ;;
   start)   cmd_start ;;
   stop)    cmd_stop ;;
   restart) cmd_stop; cmd_start ;;
@@ -118,5 +180,5 @@ case "${1:-}" in
   build)   cmd_build ;;
   test)    npm run -s typecheck && npm test ;;
   clean)   cmd_clean ;;
-  *) echo "usage: $0 {start|stop|restart|restart-backend|status|open|logs|login <codex|claude|opencode>|build|test|clean}"; exit 1 ;;
+  *) echo "usage: $0 {console (default)|start|stop|restart|restart-backend|status|open|logs|login <codex|claude|opencode>|build|test|clean}"; exit 1 ;;
 esac

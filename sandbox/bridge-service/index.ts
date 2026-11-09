@@ -6,6 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { request, response } from "../../packages/protocol/index.ts";
 import { DeviceClient } from "../../packages/device-client/index.ts";
 import { startRfc2217, type Api } from "./rfc2217.ts";
+import { startProbeServers } from "./probe.ts";
 const pending = new Map<
   string,
   { done: (value: unknown) => void; timer: ReturnType<typeof setTimeout> }
@@ -139,10 +140,12 @@ server.listen(47832, "0.0.0.0", () =>
 let deviceClient: DeviceClient | undefined;
 const lazyApi: Api = {
   list: () => (deviceClient ??= new DeviceClient()).list(),
-  call: (op, device, args, lease) =>
-    (deviceClient ??= new DeviceClient()).call(op as never, device as never, args, lease),
+  call: (op, device, args, lease, timeoutMs) =>
+    (deviceClient ??= new DeviceClient()).call(op as never, device as never, args, lease, timeoutMs),
 };
 startRfc2217(lazyApi, 2217, "127.0.0.1");
+// Shared debug probes for OpenOCD's cmsis-dap TCP backend, one port per probe from 4441 (see probe.ts).
+startProbeServers(lazyApi);
 
 // Keep DeviceDock's section of the agent instructions current in the workspace (see instructions.ts): the user's
 // own text in AGENTS.md / CLAUDE.md is never touched.

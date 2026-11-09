@@ -1,5 +1,5 @@
 import { DeviceClient } from "./index.ts";
-import { hexBytes, orderDevices, rfc2217Url } from "../protocol/index.ts";
+import { hexBytes, orderDevices, orderProbes, rfc2217Url, openocdConfig } from "../protocol/index.ts";
 const [cmd, id, ...flags] = process.argv.slice(2);
 const value = (key: string) => flags[flags.indexOf(key) + 1];
 // Stop cleanly on Ctrl-C / SIGTERM so the lease is released (a killed client otherwise leaves it held for 30 s,
@@ -27,12 +27,31 @@ try {
   if (cmd === "list") {
     // Same order as the RFC 2217 ports: the Nth device here is on port 2217+N. Use its `rfc2217` URL for esptool,
     // pyserial, mpremote and PlatformIO (real hardware first, then simulators).
-    console.log(JSON.stringify(orderDevices(devices).map((d, i) => ({ ...d, rfc2217: rfc2217Url(i) })), null, 2));
+    // Debug probes follow, each with the OpenOCD commands for its own port (4441, 4442, ...).
+    console.log(
+      JSON.stringify(
+        [
+          ...orderDevices(devices).map((d, i) => ({ ...d, rfc2217: rfc2217Url(i) })),
+          ...orderProbes(devices).map((d, i) => ({ ...d, openocd: openocdConfig(i) })),
+        ],
+        null,
+        2,
+      ),
+    );
   } else {
     const d = devices.find((d) => d.id === id);
     if (!d) throw Error("Device not exposed; run device list");
     await client.using(d, async (lease) => {
-      if (cmd === "send") {
+      if (cmd === "probe-open") {
+        // One human approval opens a debug session; OpenOCD runs inside it need no further clicks. It lapses after
+        // 10 minutes without probe traffic, or when the human cuts it off in the page.
+        console.error("Waiting for approval in the DeviceDock page (up to 25 s)...");
+        const r = (await client.call("probe.open", d, {}, lease)) as { session: string };
+        console.log(`Probe session ${r.session}. Now run OpenOCD with the device's \`openocd\` commands from \`device list\`.`);
+      } else if (cmd === "probe-close") {
+        await client.call("probe.close", d, {}, lease);
+        console.log("Probe session closed.");
+      } else if (cmd === "send") {
         const data = flags.includes("--hex")
           ? Buffer.from(hexBytes(value("--hex")))
           : flags.includes("--text")
@@ -84,7 +103,7 @@ try {
         await readFor(client, d, lease, flags.includes("--seconds") ? seconds("--seconds") * 1000 : Infinity);
       } else
         throw Error(
-          "Commands: list, connect, configure, send (--text|--hex [--read SECONDS]), signals, monitor [--seconds N], disconnect",
+          "Commands: list, connect, configure, send (--text|--hex [--read SECONDS]), signals, monitor [--seconds N], disconnect, probe-open, probe-close",
         );
     });
   }

@@ -15,7 +15,7 @@ export function createDeviceMcpServer(client: DeviceClient) {
     id: z.string().uuid(),
     generation: z.number().int().positive(),
     name: z.string().default("Device"),
-    kind: z.enum(["serial", "mock", "sim"]).default("serial"),
+    kind: z.enum(["serial", "mock", "sim", "probe"]).default("serial"),
     baudRate: z.number().default(115200),
   });
   const uuid = { type: "string", format: "uuid" };

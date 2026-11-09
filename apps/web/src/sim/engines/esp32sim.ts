@@ -18,6 +18,9 @@ type Manifest = {
   files?: Record<string, string | string[]>;
   flash_at?: Record<string, string>;
   app_direct?: boolean;
+  /** Functions the emulator replaces ("name=value"); names resolve through `symbols` (address strings). */
+  stubs?: string[];
+  symbols?: Record<string, string>;
 };
 type Loadable = { kind?: number; at?: number; data: ArrayBuffer };
 type Bundle = { manifest: Manifest; loads: Loadable[]; wasm: ArrayBuffer };
@@ -47,6 +50,12 @@ export function rgb565ToRgba(pixels: Uint8Array, width: number, height: number):
     out[j + 3] = 255;
   }
   return out;
+}
+
+/** As esp32sim's own page: replace the name by its address from `symbols`, keep the "=value" text as written. */
+export function stubSpec(spec: string, symbols: Record<string, string> = {}): string {
+  const split = spec.indexOf("="), name = split < 0 ? spec : spec.slice(0, split);
+  return (symbols[name] || name) + (split < 0 ? "" : spec.slice(split));
 }
 
 export function createEsp32SimEngine(): SimEngine {
@@ -125,6 +134,7 @@ export function createEsp32SimEngine(): SimEngine {
       const r = await ask("loaded", l.at !== undefined ? { op: "load", at: l.at, data } : { op: "load", kind: l.kind, data }, [data]);
       if (r.ok === false) throw new Error(`esp32sim rejected a firmware image (${String(r.loaded)})`);
     }
+    for (const st of bundle.manifest.stubs ?? []) worker!.postMessage({ op: "stub", spec: stubSpec(st, bundle.manifest.symbols) });
     const started = await ask("started", { op: "start", appDirect: !!bundle.manifest.app_direct });
     if (started.started === false) throw new Error(started.error || "esp32sim failed to start");
   }
