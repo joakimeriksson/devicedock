@@ -30,6 +30,46 @@ PROFILES = {
     "display": {"width": 135, "height": 240, "rotate": 270},
     "buttons": [{"label": "left (GPIO 0)", "pin": 0}, {"label": "right (GPIO 35)", "pin": 35}],
   },
+  # Download-mode straps verified with stock esptool (flash-id, stub, write-flash with hash check); "normal" is the
+  # chip's reset default (0x0f, SPI boot).
+  "hello": {
+    "id": "esp32sim-esp32s3-hello",
+    "label": "ESP32-S3 dev board (simulated)",
+    "engine": "esp32sim", "board": "esp32s3", "chip": "esp32s3",
+    "description": "Bare ESP32-S3 (dual Xtensa LX7, 8 MB flash, 2 MB PSRAM) running IDF hello_world, in esp32sim. Console on UART0; esptool can flash it.",
+    "console": "uart0", "baudRate": 115200,
+    "engineConfig": {"base": "/sim/esp32sim/", "manifest": "hello.json",
+                     "strap": {"normal": "0x0f", "download": "0x0"}},
+  },
+  "c3-hello": {
+    "id": "esp32sim-esp32c3-hello",
+    "label": "ESP32-C3 dev board (simulated)",
+    "engine": "esp32sim", "board": "esp32c3", "chip": "esp32c3",
+    "description": "Bare ESP32-C3 (RISC-V, 4 MB flash) running IDF hello_world, in esp32sim. Console on UART0; esptool can flash it (slowly: about 7 s per 64 KB).",
+    "console": "uart0", "baudRate": 115200,
+    "engineConfig": {"base": "/sim/esp32sim/", "manifest": "c3-hello.json",
+                     "strap": {"normal": "0x0f", "download": "0x4"}},
+  },
+  "c6-hello": {
+    "id": "esp32sim-esp32c6-hello",
+    "label": "ESP32-C6 dev board (simulated)",
+    "engine": "esp32sim", "board": "esp32c6", "chip": "esp32c6",
+    "description": "Bare ESP32-C6 (RISC-V, 4 MB flash) running IDF hello_world, in esp32sim. Console on UART0; esptool can flash it.",
+    "console": "uart0", "baudRate": 115200,
+    "engineConfig": {"base": "/sim/esp32sim/", "manifest": "c6-hello.json",
+                     "strap": {"normal": "0x0f", "download": "0x4"}},
+  },
+  "c6-energy-scan": {
+    "id": "esp32sim-waveshare-c6-lcd147",
+    "label": "Waveshare ESP32-C6-LCD-1.47 (simulated)",
+    "engine": "esp32sim", "board": "waveshare-c6-lcd147", "chip": "esp32c6",
+    "description": "ESP32-C6 with a 172x320 ST7789 LCD and a WS2812, running an 802.15.4 energy scanner, in esp32sim. Console on UART0; esptool can flash it.",
+    "console": "uart0", "baudRate": 115200,
+    "engineConfig": {"base": "/sim/esp32sim/", "manifest": "c6-energy-scan.json",
+                     "strap": {"normal": "0x0f", "download": "0x4"}},
+    "display": {"width": 172, "height": 320, "rotate": 0},
+    "buttons": [{"label": "BOOT (GPIO 9)", "pin": 9}],
+  },
 }
 profiles = []
 for name in bundles:

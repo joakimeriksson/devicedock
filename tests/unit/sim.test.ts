@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SimAdapter } from "../../apps/web/src/sim/SimAdapter.ts";
 import { registerEngine, loadProfiles } from "../../apps/web/src/sim/registry.ts";
-import { rgb565ToRgba } from "../../apps/web/src/sim/engines/esp32sim.ts";
+import { rgb565ToRgba, stubSpec } from "../../apps/web/src/sim/engines/esp32sim.ts";
 import type { SimEngine, SimEvent, SimProfile } from "../../apps/web/src/sim/types.ts";
 
 // A fake engine: proves SimAdapter works for ANY engine, with none of esp32sim's code involved.
@@ -108,4 +108,10 @@ test("esp32sim engine: hex round-trips every byte (esptool's SLIP is binary)", a
   const all = Uint8Array.from({ length: 256 }, (_, i) => i);
   assert.equal(toHex(Uint8Array.from([0xc0, 0x00, 0xdb, 0xff])), "c000dbff");
   assert.deepEqual([...fromHex(toHex(all))], [...all]);
+});
+
+test("esp32sim stub specs resolve names through the manifest's symbols", () => {
+  assert.equal(stubSpec("bb_init=0", { bb_init: "0x4204f982" }), "0x4204f982=0");
+  assert.equal(stubSpec("esp_wifi_start=0"), "esp_wifi_start=0");
+  assert.equal(stubSpec("foo", { foo: "0x10" }), "0x10");
 });
