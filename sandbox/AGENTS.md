@@ -4,6 +4,17 @@ You run in an isolated Linux sandbox. There is **no `/dev/tty*` for the hardware
 device (or starts a simulated board) from their browser, and you reach it over a bridge. Only shared devices are
 reachable.
 
+## 0. What is installed
+`cat /etc/devicedock-variant` says which image this is: `base`, `contiki`, `esp32` or `full`.
+- Every image: `arm-none-eabi-gcc`, `openocd`, `cngsim` (Cooja-NG), `esptool`, `pyserial`, `mpremote`, `device`.
+- `contiki`/`full`: a pinned, read-only Contiki-NG at `/opt/contiki-ng` with submodules. Copy it before building:
+  `cp -r /opt/contiki-ng /workspace/contiki-ng`. MSP430 GCC (Sky/Z1) only on amd64: if
+  `/usr/local/share/NO-MSP430-GCC` exists, Sky/Z1 cannot be built here (say so; ARM boards are fine).
+- `esp32`/`full`: ESP-IDF v5.5 at `/opt/esp-idf` for esp32, esp32s3, esp32c3, esp32c6. Run `get_idf` (or
+  `. /opt/esp-idf/export.sh`) once per shell, then `idf.py set-target <chip> build`.
+  Flash a shared board with `idf.py -p <rfc2217 URL from device list> flash`.
+- A tool that is not installed: say which image has it instead of installing large toolchains yourself.
+
 ## 1. What is shared: `device list`
 
 ```sh
@@ -121,19 +132,43 @@ LaunchPads are flashed with OpenOCD as above, not with Contiki's serial-bootload
   unless the human asked for exactly that. A wrong CCFG can disable debug access permanently.
 - Before overwriting firmware the human may want back, suggest a backup (above).
 
-## 8. When your own shell commands fail
+## 8. Simulating Contiki-NG boards and networks: Cooja-NG (`cngsim`)
+`cngsim` runs the **same firmware ELF you would flash**, instruction by instruction, on an emulated board, alone or
+as a radio network. Use it to try firmware before touching hardware, and for anything with more than one node.
+Results are simulator results: say so in reports.
+
+```sh
+cngsim boards                                   # boards + the Contiki-NG TARGET/BOARD to build for each
+cp build/simplelink/launchpad/cc1352r1/hello-world.simplelink /tmp/hello.cc1352r1-launchpad
+cngsim run /tmp/hello.cc1352r1-launchpad -t 25s # one node, 25 s simulated; prints its console and a verdict
+cngsim run app.nrf52840-dk -n 5 -t 2m           # five nodes of one image on one radio medium
+cngsim examples && cngsim run mixed-platforms   # bundled multi-node setups
+cngsim new rpl-udp --board cc1352r1-launchpad -n 6 -o net.yaml   # write a setup file to edit, then: cngsim run net.yaml
+```
+- The board comes from the file name `<app>.<board>` (or `--board <board>`); `.simplelink`/`.elf` names need one of them.
+- Durations need a unit (`25s`, `500ms`, `2m`). Runs are headless and deterministic: the same `--seed` gives the same run.
+- Verified: the Contiki-NG hello-world ELF for the CC1352R1 LaunchPad prints the same output as the real board,
+  at ~700x real time.
+- Exit codes: 0 pass, 1 a check failed, 2 bad input, 6 wall-clock timeout. Setup files can hold checks
+  (`cngsim help`; `/opt/cooja-ng/share/cooja-ng` has the guides and examples).
+- `--ui` serves its web view on port 8080 **inside the sandbox only**; the human's browser cannot reach it. Use the
+  console output, `--pcap`, or `--ui-record`.
+- `--gdb PORT` gives a GDB server on a simulated node (`arm-none-eabi-gdb <elf> -ex "target remote :PORT"`).
+- Not a DeviceDock device yet: a simulated node does not appear in `device list`.
+
+## 9. When your own shell commands fail
 You may be inside a container that cannot create the user namespaces some agents use for their private sandbox
 (Codex reports *bwrap … cannot create a namespace*). Do not try to work around it. Tell the human: this container
 is already the sandbox, and Codex can be started from the shell with `--sandbox danger-full-access` (or, only if
 they want no prompts at all, `--dangerously-bypass-approvals-and-sandbox`).
 
-## 9. The loop
+## 10. The loop
 1. Write or change code in `/workspace`; build it (PlatformIO, arduino-cli, or MicroPython files).
 2. Flash or upload through the device's RFC 2217 URL (the reset into the bootloader is automatic).
 3. Read the output (`device send --read`, `device monitor --seconds`, or pyserial) and compare with what you expect.
 4. Fix and repeat. Stop and report if the same failure happens three times.
 
-## 10. Rules of the road
+## 11. Rules of the road
 - Operate only the shared devices. Do not try to reach the Mac, the Docker socket, or other hardware.
 - Confirm the baud rate from `device list` instead of hard-coding one the board may not use.
 - Credentials for your own login live in this container's home volume; never print them.

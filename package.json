@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/unit/*.test.ts tests/integration/*.test.ts",
     "test:browser": "playwright test",
-    "sandbox:build": "docker build -t devicedock-sandbox:local -f sandbox/Dockerfile .",
+    "sandbox:build": "docker build --target ${DEVICEDOCK_VARIANT:-contiki} -t devicedock-sandbox:local -f sandbox/Dockerfile .",
     "sandbox:start": "tsx scripts/sandbox.ts start",
     "sandbox:stop": "tsx scripts/sandbox.ts stop",
     "sandbox:clean": "tsx scripts/sandbox.ts clean",

@@ -1,0 +1,101 @@
+# Builds the DeviceDock sandbox image variants for amd64 and arm64 on native runners and publishes them to
+# ghcr.io/<owner>/devicedock-sandbox:<variant> (plus <variant>-<short sha>). Runs on pushes to main that touch the
+# image, and by hand (Actions -> sandbox-image -> Run workflow). Pull requests build every variant without publishing.
+name: sandbox-image
+
+on:
+  push:
+    branches: [main]
+    paths: [sandbox/**, packages/**, package.json, package-lock.json, scripts/prepare-pty.mjs, .github/workflows/sandbox-image.yml]
+  pull_request:
+    paths: [sandbox/**, packages/**, package.json, package-lock.json, scripts/prepare-pty.mjs, .github/workflows/sandbox-image.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/devicedock-sandbox
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [base, contiki, esp32, full]
+        platform: [linux/amd64, linux/arm64]
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      PUBLISH: ${{ github.event_name != 'pull_request' }}
+    steps:
+      # A hosted runner has ~14 GB free; the full image needs more. Remove preinstalled SDKs we do not use (~30 GB).
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/boost /usr/share/swift || true
+          sudo docker image prune -af >/dev/null || true
+          df -h /
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: env.PUBLISH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build (and on main, push by digest)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: sandbox/Dockerfile
+          target: ${{ matrix.variant }}
+          platforms: ${{ matrix.platform }}
+          outputs: ${{ env.PUBLISH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=cacheonly' }}
+          # The build cache lives in the registry (GitHub's own cache holds only 10 GB per repository).
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.variant }}-${{ matrix.runner }}
+          cache-to: ${{ env.PUBLISH == 'true' && format('type=registry,mode=max,ref={0}:buildcache-{1}-{2}', env.IMAGE, matrix.variant, matrix.runner) || '' }}
+      - name: Save the digest
+        if: env.PUBLISH == 'true'
+        run: |
+          mkdir -p /tmp/digests && d="${{ steps.build.outputs.digest }}" && touch "/tmp/digests/${d#sha256:}"
+      - uses: actions/upload-artifact@v4
+        if: env.PUBLISH == 'true'
+        with:
+          name: digest-${{ matrix.variant }}-${{ matrix.runner }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        variant: [base, contiki, esp32, full]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ matrix.variant }}-*
+          path: /tmp/digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: One multi-arch tag per variant
+        working-directory: /tmp/digests
+        run: |
+          short=$(echo "${{ github.sha }}" | cut -c1-7)
+          docker buildx imagetools create \
+            -t "$IMAGE:${{ matrix.variant }}" -t "$IMAGE:${{ matrix.variant }}-$short" \
+            $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:${{ matrix.variant }}"

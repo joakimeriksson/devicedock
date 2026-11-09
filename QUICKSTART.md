@@ -44,8 +44,24 @@ git clone <this repository> && cd usb-agent-bridge
 ./devicedock.sh
 ```
 
-That single command installs dependencies, builds the web page and the sandbox image if they are missing,
-starts the sandbox and the backend, and leaves you at the **console**:
+**Pick your sandbox image first** (it holds all the build tools). Set it once in your shell, before `./devicedock.sh`:
+
+| `DEVICEDOCK_VARIANT=` | What you get | Size on disk |
+| --- | --- | --- |
+| `base` | agents, OpenOCD, ARM GCC, Cooja-NG simulator, esptool / pyserial / mpremote | ~3 GB |
+| `contiki` *(default)* | base + Contiki-NG (`/opt/contiki-ng`) + MSP430 GCC for Sky/Z1 (Intel/AMD only) | ~6 GB |
+| `esp32` | base + ESP-IDF v5.5 for ESP32, S3, C3, C6 | ~9 GB |
+| `full` | everything: Contiki-NG + ESP-IDF | ~12 GB |
+
+Give Docker room: Colima's default disk is too small for `full` plus rebuilds. Use `colima start --disk 200`
+(it can only grow), or in Docker Desktop: Settings → Resources → Disk usage limit.
+
+```sh
+export DEVICEDOCK_VARIANT=full      # for example; leave it out for contiki
+```
+
+That single command installs dependencies, builds the web page, **downloads** the sandbox image (or builds it
+locally if the download is not available), starts the sandbox and the backend, and leaves you at the **console**:
 
 ```text
 ── DeviceDock 18:56:39 ──
@@ -67,7 +83,8 @@ devicedock>
 | `l` | last 30 lines of the backend log |
 | `rb` | restart the backend (then reload the page and share again) |
 | `rs` | recreate the sandbox from the current image (asks first; your files and logins are kept) |
-| `w` / `i` | rebuild the web page / the sandbox image |
+| `w` / `i` | rebuild the web page / build the sandbox image locally |
+| `p` | download the published sandbox image (then `rs` to switch to it) |
 | `login claude` / `login codex` | log an agent in **inside the sandbox** |
 | `q` | leave the console, keep everything running |
 | `x` | stop everything and leave |
@@ -100,10 +117,9 @@ Verified on a CC1352R1 LaunchPad on 2026-11-09. Share **both** the serial port a
 In the console type `sh`, then:
 
 ```sh
-# 1. Build (first time: clone Contiki-NG with its submodules)
-cd /workspace
-git clone --recursive https://github.com/contiki-ng/contiki-ng.git
-cd contiki-ng/examples/hello-world
+# 1. Build (first time: copy the image's Contiki-NG into your workspace)
+cp -r /opt/contiki-ng /workspace/contiki-ng
+cd /workspace/contiki-ng/examples/hello-world
 make TARGET=simplelink BOARD=launchpad/cc1352r1
 
 # 2. Find the ids
@@ -120,6 +136,15 @@ openocd -c "adapter driver cmsis-dap; cmsis-dap backend tcp; cmsis-dap tcp host 
 # 5. Watch it run
 device monitor <serial-id> --seconds 20      # prints "Hello, world" every 10 s
 ```
+
+**Try it on the simulator first** (no board needed, runs ~700x faster than real time):
+```sh
+cp build/simplelink/launchpad/cc1352r1/hello-world.simplelink /tmp/hello.cc1352r1-launchpad
+cngsim run /tmp/hello.cc1352r1-launchpad -t 25s
+```
+
+**ESP32 with ESP-IDF** (`esp32` or `full` image): `get_idf` once per shell, then the usual `idf.py build`, and flash
+with `idf.py -p <rfc2217 URL from device list> flash monitor`.
 
 Your board is a different LaunchPad? Use its name in `BOARD=` (`launchpad/cc1312r1`, `launchpad/cc2652r1`, …).
 The CC13x2 and CC26x2 chips share `target/ti/cc13x2.cfg` (`cc26x2.cfg` also exists).
@@ -172,8 +197,10 @@ Serial is not affected.
 
 ## 7. Before a lab or hackathon
 
-- Run `./devicedock.sh` once on every laptop **the day before**: the first image build downloads and compiles a lot.
-- No time to build everywhere? Build once per CPU type and copy it:
+- Run `./devicedock.sh` once on every laptop **the day before**: the image download is large (several GB for `full`).
+- Published images: `ghcr.io/joakimeriksson/devicedock-sandbox:<variant>`, for both Apple silicon and Intel/AMD
+  (`docker pull` picks the right one).
+- No network at the venue? Save the image on one machine per CPU type and copy it:
   ```sh
   docker save devicedock-sandbox:local | gzip > devicedock-sandbox.tar.gz     # on the built machine
   gunzip -c devicedock-sandbox.tar.gz | docker load                            # on the others
