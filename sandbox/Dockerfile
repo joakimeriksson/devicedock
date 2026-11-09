@@ -12,11 +12,12 @@ RUN git clone https://github.com/openocd-org/openocd.git /src && cd /src && git 
 # Cooja-NG (cngsim): the C re-implementation of Cooja/MSPSim. Emulates the real firmware ELF for Sky/Z1 (MSP430),
 # CC2538/Zoul, CC1352R1/CC1312R7 LaunchPads and nRF52840/nRF54L15, alone or as a radio network. Pinned upstream commit;
 # NATIVE_FLAG= keeps the binary portable (no -march=native), so a `docker save`d image runs on other machines.
+# WERROR=0: Debian GCC 12 with LTO on amd64 reports a false stringop-overflow in sim_config_yaml.c (n < 8 is checked).
 FROM debian:bookworm-slim AS cooja-ng
 ARG COOJA_NG_COMMIT=c8345345835fc085457a71b30421a5b46a449f78
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git build-essential pkg-config python3 && rm -rf /var/lib/apt/lists/*
 RUN git clone https://github.com/mikroverk/cooja-ng.git /src && cd /src && git checkout "$COOJA_NG_COMMIT" \
- && make -j"$(nproc)" NATIVE_FLAG= && make install PREFIX=/opt/cooja-ng NATIVE_FLAG=
+ && make -j"$(nproc)" NATIVE_FLAG= WERROR=0 && make install PREFIX=/opt/cooja-ng NATIVE_FLAG= WERROR=0
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Image variants (docker build --target <variant>):
