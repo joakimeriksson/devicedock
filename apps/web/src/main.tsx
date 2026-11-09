@@ -62,6 +62,15 @@ const mock = new MockAdapter(),
   serial = new WebSerialAdapter(),
   probes = new ProbeAdapter();
 function App() {
+  // In-page confirmation. Native window.confirm() can be auto-dismissed by browser extensions (automation tools close
+  // dialogs) or suppressed for the page ("prevent additional dialogs"), which silently cancelled every share.
+  const [pendingConfirm, setPendingConfirm] = useState<{ message: string; resolve: (ok: boolean) => void }>();
+  const confirmInPage = (message: string) =>
+    new Promise<boolean>((resolve) => setPendingConfirm({ message, resolve }));
+  const answerConfirm = (ok: boolean) => {
+    pendingConfirm?.resolve(ok);
+    setPendingConfirm(undefined);
+  };
   const [csrf, setCsrf] = useState(""),
     [error, setError] = useState(""),
     [health, setHealth] = useState<any>(),
@@ -468,17 +477,17 @@ function App() {
   async function expose(row: Row, auto?: { baudRate: number }) {
     if (
       row.kind === "probe" &&
-      !window.confirm(
+      !(await confirmInPage(
         "Sharing a debug probe gives container programs (OpenOCD, GDB) full control of the attached chip: they can halt it, read and erase its flash, and change protection settings, which can lock a part permanently. Each OpenOCD session will need your approval (or autonomous mode). Debug probes are never shared automatically. Share this probe?",
-      )
+      ))
     )
       return;
     if (
       !auto &&
       row.kind === "serial" &&
-      !window.confirm(
+      !(await confirmInPage(
         "Sharing lets container programs request arbitrary serial bytes, which may change hardware state. Each agent operation will require your approval. It will be shared again automatically after restarts (untick “Auto-share next time” to stop). Open and share this port?",
-      )
+      ))
     )
       return;
     const useBaud = auto?.baudRate ?? baud;
@@ -509,12 +518,12 @@ function App() {
       },
     });
   }
-  function setAutonomy(row: Row, minutes: number | null): boolean {
+  async function setAutonomy(row: Row, minutes: number | null): Promise<boolean> {
     if (
       minutes !== null &&
-      !window.confirm(
+      !(await confirmInPage(
         `Autonomous mode lets agents in the sandbox write to, reset and flash this device WITHOUT asking you, for ${minutes} minutes. Anything wired to the board may be affected. Turn it on?`,
-      )
+      ))
     )
       return false;
     const until = minutes === null ? null : Date.now() + minutes * 60000;
@@ -548,6 +557,19 @@ function App() {
   }
   return (
     <div className="app">
+      {pendingConfirm && (
+        <div className="confirm-backdrop" role="dialog" aria-modal="true">
+          <div className="confirm-box">
+            <p>{pendingConfirm.message}</p>
+            <div className="confirm-actions">
+              <button onClick={() => answerConfirm(false)}>Cancel</button>
+              <button className="primary" autoFocus onClick={() => answerConfirm(true)}>
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <header className="topbar">
         <div className="brand">
           <span className="logo">↔</span>
@@ -1081,10 +1103,10 @@ function App() {
             </button>
             <button
               className="primary"
-              onClick={() => {
+              onClick={async () => {
                 const dev = approvals[0].deviceId;
                 const row = rowsRef.current.find((r) => r.id === dev);
-                if (!row || !setAutonomy(row, 15)) return;
+                if (!row || !(await setAutonomy(row, 15))) return;
                 for (const a of approvals.filter((x) => x.deviceId === dev))
                   send({ type: "approve", id: a.id, allow: true });
                 setApprovals((old) => old.filter((x) => x.deviceId !== dev));
