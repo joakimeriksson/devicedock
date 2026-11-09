@@ -15,6 +15,7 @@ import { Terminal, type TerminalKind } from "./Terminal";
 import { useTheme, type ThemePref } from "./theme";
 import "./sim/engines";
 import { SimAdapter } from "./sim/SimAdapter";
+import { ProbeAdapter } from "./probe";
 import { SimDisplay } from "./sim/SimDisplay";
 import { loadProfiles } from "./sim/registry";
 import type { SimProfile } from "./sim/types";
@@ -27,6 +28,8 @@ type Row = Descriptor & {
   baudRate: number;
   autoApprove: boolean;
   autonomousUntil?: number;
+  /** Debug probe: an approved session is active (agents' OpenOCD can drive the chip without further clicks). */
+  probeSession?: boolean;
 };
 type Rpc = {
   v: 1;
@@ -56,7 +59,8 @@ function saveRemembered(m: Record<string, number>) {
 }
 const simAdapter = new SimAdapter();
 const mock = new MockAdapter(),
-  serial = new WebSerialAdapter();
+  serial = new WebSerialAdapter(),
+  probes = new ProbeAdapter();
 function App() {
   const [csrf, setCsrf] = useState(""),
     [error, setError] = useState(""),
@@ -323,11 +327,14 @@ function App() {
             ),
           );
         else if (m.type === "operation") void execute(m.request);
+        else if (m.type === "probe-session")
+          update((old) => old.map((r) => (r.id === m.deviceId ? { ...r, probeSession: !!m.active } : r)));
       };
     }
     async function execute(r: Rpc) {
       let ok = false,
-        err = "";
+        err = "",
+        data: string | undefined;
       try {
         protocolRequest.parse(r);
         const row = rowsRef.current.find(
@@ -336,7 +343,14 @@ function App() {
         );
         if (!row || r.deadline <= Date.now())
           throw Error("Device revoked, stale, or deadline expired");
-        if (r.op === "serial.write") {
+        if (r.op === "probe.transfer") {
+          // DAP packets are not logged to the serial monitor: there are hundreds per second while flashing.
+          if (!(row.adapter instanceof ProbeAdapter)) throw Error("Not a debug probe");
+          data = encode(await row.adapter.transfer(row.id, decode(r.args.data as string)));
+        } else if (r.op === "probe.open") {
+          await row.adapter.open(row.id, { baudRate: 115200 });
+          log(new TextEncoder().encode("debug session approved and opened"), "PROBE", row);
+        } else if (r.op === "serial.write") {
           const bytes = decode(r.args.data as string);
           log(bytes, "TX", row);
           await row.adapter.write(row.id, bytes);
@@ -365,7 +379,7 @@ function App() {
         err = (e as Error).message;
       }
       try {
-        send({ type: "reply", id: r.id, ok, error: err.slice(0, 300) });
+        send({ type: "reply", id: r.id, ok, error: err.slice(0, 300), ...(data !== undefined ? { data } : {}) });
       } catch {}
     }
     connect();
@@ -453,8 +467,15 @@ function App() {
   }
   async function expose(row: Row, auto?: { baudRate: number }) {
     if (
+      row.kind === "probe" &&
+      !window.confirm(
+        "Sharing a debug probe gives container programs (OpenOCD, GDB) full control of the attached chip: they can halt it, read and erase its flash, and change protection settings, which can lock a part permanently. Each OpenOCD session will need your approval (or autonomous mode). Debug probes are never shared automatically. Share this probe?",
+      )
+    )
+      return;
+    if (
       !auto &&
-      isPhysical(row.kind) &&
+      row.kind === "serial" &&
       !window.confirm(
         "Sharing lets container programs request arbitrary serial bytes, which may change hardware state. Each agent operation will require your approval. It will be shared again automatically after restarts (untick “Auto-share next time” to stop). Open and share this port?",
       )
@@ -464,7 +485,7 @@ function App() {
     // An already-open port is kept open: reopening can reset the attached board.
     if (!row.open)
       await row.adapter.open(row.id, serialOptions.parse({ baudRate: useBaud }));
-    if (isPhysical(row.kind) && !auto)
+    if (row.kind === "serial" && !auto)
       setRemembered({ ...rememberedRef.current, [row.name]: useBaud });
     const next = {
       ...row,
@@ -513,7 +534,7 @@ function App() {
     send({ type: "revoke", deviceId: row.id });
     update((old) =>
       old.map((r) =>
-        r.id === row.id ? { ...r, exposed: false, autonomousUntil: undefined } : r,
+        r.id === row.id ? { ...r, exposed: false, autonomousUntil: undefined, probeSession: false } : r,
       ),
     );
     setApprovals((old) => old.filter((r) => r.deviceId !== row.id));
@@ -628,6 +649,20 @@ function App() {
                   ＋ Add serial port
                 </button>
                 <button
+                  disabled={!connected || !probes.supported.usb}
+                  title="CMSIS-DAP v2 debug probe over WebUSB (e.g. a TI LaunchPad's XDS110)"
+                  onClick={() => run(async () => add(probes, await probes.requestUsb()))}
+                >
+                  ＋ Add debug probe
+                </button>
+                <button
+                  disabled={!connected || !probes.supported.hid}
+                  title="CMSIS-DAP v1 debug probe over WebHID (e.g. the SAMD11 on a XIAO nRF54L15)"
+                  onClick={() => run(async () => add(probes, await probes.requestHid()))}
+                >
+                  Probe (HID)
+                </button>
+                <button
                   disabled={!connected}
                   onClick={() => run(() => add(mock))}
                 >
@@ -739,7 +774,7 @@ function App() {
                   {row.kind === "sim" && row.open && row.adapter instanceof SimAdapter && (
                     <SimDisplay adapter={row.adapter} id={row.id} />
                   )}
-                  {isPhysical(row.kind) && (
+                  {row.kind === "serial" && (
                     <label>
                       <input
                         type="checkbox"
@@ -974,6 +1009,31 @@ function App() {
           mounts
         </footer>
       </main>
+      {rows.some((r) => r.probeSession && r.exposed) && (
+        <div className="probe-banner" role="status">
+          {rows
+            .filter((r) => r.probeSession && r.exposed)
+            .map((r) => (
+              <div key={r.id}>
+                <span>
+                  <i className="dot" /> DEBUG SESSION ACTIVE · {deviceLabel(r.id, r.name)}: agents can halt, read and
+                  flash this chip without further approval
+                </span>
+                <button
+                  className="danger"
+                  onClick={() => {
+                    try {
+                      send({ type: "probe-end", deviceId: r.id });
+                    } catch {}
+                    update((old) => old.map((x) => (x.id === r.id ? { ...x, probeSession: false } : x)));
+                  }}
+                >
+                  Cut off
+                </button>
+              </div>
+            ))}
+        </div>
+      )}
       {approvals.length > 0 && (
         <div className="approval-backdrop">
           <section

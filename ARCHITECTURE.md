@@ -28,6 +28,7 @@ Nothing in the broker, bridge, CLI, MCP server or RFC 2217 server knows how a de
 | --- | --- | --- |
 | add a **simulator/emulator that runs in the browser** | `SimEngine` (`apps/web/src/sim/types.ts`) + a profile | one engine file, one registration line, one profile |
 | add a **new real transport** (WebUSB, WebHID, Bluetooth serial) | `DeviceAdapter` (`apps/web/src/adapters.ts`) | one adapter; kind stays `serial` (physical) |
+| add another **debug-probe transport** | `ProbeAdapter` (`apps/web/src/probe.ts`) | kind `probe` (physical); see 4.1 |
 | add a **simulator that cannot run in the browser** (QEMU, Renode, a native emulator) | a *device provider* (section 6, **not built**) | bridge service / backend |
 | change what agents can do | `packages/protocol` operations, `apps/server/broker.ts` | protocol, broker, SDK |
 
@@ -51,7 +52,7 @@ and an opaque `engineConfig` that only the engine reads). No profile file means 
 that is not registered is ignored, so a stale profile cannot break the page.
 
 ### 2.4 Device kinds are trust classes, not implementations
-`packages/protocol`: `kind` is `serial` | `mock` | `sim`; `isPhysical(kind)` is true only for `serial`.
+`packages/protocol`: `kind` is `serial` | `probe` | `mock` | `sim`; `isPhysical(kind)` is true for `serial` and `probe`.
 **All safety policy keys off that predicate**: whether a hardware warning is shown, whether approvals may be
 waived (`autoApprove`), whether a port is remembered and auto-shared. `engine` and `board` are display-only labels.
 `device list` reports `simulated: true` (plus `engine`, `board`) for software devices, so an agent can never mistake
@@ -75,6 +76,27 @@ Everything else (adapter, UI display panel, broker, bridge, CLI, MCP, RFC 2217) 
 | `autoApprove` flag allowed | **never** (broker rejects it) | yes |
 | remembered and auto-shared after restart | yes (opt-out) | no |
 | `device list` | `simulated` absent | `simulated: true`, `engine`, `board` |
+
+### 4.1 Debug probes (`kind: "probe"`)
+A CMSIS-DAP debug probe owned by the page: WebUSB for CMSIS-DAP v2 (a vendor bulk interface; the TI XDS110's
+interface 6), WebHID for v1 (HID reports, e.g. the SAMD11 on a XIAO nRF54L15; macOS claims HID interfaces, so
+WebUSB cannot). The page forwards one DAP command packet and returns the response (`probe.transfer`); it does not
+interpret the protocol. In the container, `sandbox/bridge-service/probe.ts` listens on `127.0.0.1:4441` (+N for the
+Nth probe) and speaks the framing of OpenOCD's `cmsis-dap backend tcp` (8-byte little-endian header `"DAP\0"`,
+u16 length, u8 type, u8 reserved), so stock OpenOCD from master drives the probe unchanged.
+
+**Approval model.** A probe is physical, so the hardware rules hold: warning on share, `autoApprove` refused, never
+auto-shared or remembered. Approving every packet is impossible (hundreds per second while flashing), so the unit of
+approval is a **session**:
+- `probe.open` needs one human approval (or autonomous mode). It starts a session on the device, not on a lease, so
+  `device probe-open` (one client) can approve it and OpenOCD's endpoint (another client) then use it.
+- `probe.transfer` runs only inside an active session, and needs no further approval. With autonomous mode on, a
+  transfer opens a session by itself.
+- The session ends after 10 minutes without transfers, on `probe.close`, when the owner clicks **Cut off** on the
+  page's always-visible session banner, or when the probe is revoked or unplugged. Leases and exclusivity are
+  unchanged: one client drives the probe at a time.
+The trade-off is explicit: inside a session, the agent can do anything a debugger can, including erasing and locking
+the chip. The banner and the 10-minute idle limit bound that window.
 
 ## 5. Adding another browser simulator (checklist)
 

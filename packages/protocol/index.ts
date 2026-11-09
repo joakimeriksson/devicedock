@@ -31,6 +31,12 @@ export const signals = z
     break: z.boolean().optional(),
   })
   .strict();
+/** Largest CMSIS-DAP packet carried (OpenOCD's TCP backend uses 1024-byte payloads; USB probes use 64 or 512). */
+export const MAX_DAP_PACKET = 1024;
+export const dapPacket = base64.refine(
+  (s) => s.length > 0 && (s.length * 3) / 4 - (s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0) <= MAX_DAP_PACKET,
+  "DAP packet empty or larger than 1024 bytes",
+);
 const common = {
   v: z.literal(1),
   id,
@@ -68,6 +74,15 @@ export const request = z.discriminatedUnion("op", [
     op: z.literal("serial.write"),
     args: z.object({ data: base64 }).strict(),
   }),
+  // Debug probes (kind "probe"): one CMSIS-DAP command packet in, its response out. See ARCHITECTURE.md §4.1 for the
+  // approval model: `probe.open` is approved once and starts a session; transfers inside it need no further approval.
+  z.object({ ...common, op: z.literal("probe.open"), args: z.object({}).strict() }),
+  z.object({ ...common, op: z.literal("probe.close"), args: z.object({}).strict() }),
+  z.object({
+    ...common,
+    op: z.literal("probe.transfer"),
+    args: z.object({ data: dapPacket }).strict(),
+  }),
   z.object({
     ...common,
     op: z.literal("serial.read"),
@@ -95,13 +110,25 @@ export const RFC2217_SLOTS = 8;
  * same order and each device's URL, so tools never have to guess.
  */
 export function orderDevices<T extends { kind: string }>(devices: T[]): T[] {
-  return [...devices.filter((d) => d.kind === "serial"), ...devices.filter((d) => d.kind !== "serial")];
+  // Debug probes carry no serial stream, so they never take an RFC 2217 port (see orderProbes).
+  const streams = devices.filter((d) => d.kind !== "probe");
+  return [...streams.filter((d) => d.kind === "serial"), ...streams.filter((d) => d.kind !== "serial")];
 }
+/** Debug probes in the order they were shared: the Nth one answers OpenOCD on port PROBE_PORT_BASE+N. */
+export const PROBE_PORT_BASE = 4441;
+export const PROBE_SLOTS = 4;
+export function orderProbes<T extends { kind: string }>(devices: T[]): T[] {
+  return devices.filter((d) => d.kind === "probe");
+}
+/** Ready-to-paste OpenOCD commands for the Nth probe (OpenOCD master's cmsis-dap TCP backend). */
+export const openocdConfig = (index: number) =>
+  `adapter driver cmsis-dap; cmsis-dap backend tcp; cmsis-dap tcp host 127.0.0.1; cmsis-dap tcp port ${PROBE_PORT_BASE + index}`;
 export const rfc2217Url = (index: number) => `rfc2217://127.0.0.1:${RFC2217_PORT_BASE + index}`;
 
-export const DEVICE_KINDS = ["serial", "mock", "sim"] as const;
+// "probe": a real debug probe (CMSIS-DAP over WebUSB/WebHID). Physical, so every hardware rule applies to it.
+export const DEVICE_KINDS = ["serial", "mock", "sim", "probe"] as const;
 export type DeviceKind = (typeof DEVICE_KINDS)[number];
-export const isPhysical = (kind: DeviceKind) => kind === "serial";
+export const isPhysical = (kind: DeviceKind) => kind === "serial" || kind === "probe";
 export const isVirtual = (kind: DeviceKind) => !isPhysical(kind);
 
 export const descriptor = z
@@ -139,7 +166,11 @@ export const browserMessage = z.discriminatedUnion("type", [
     id,
     ok: z.boolean(),
     error: z.string().max(300).optional(),
+    // The probe's response packet for probe.transfer.
+    data: base64.optional(),
   }),
+  // The owner cuts off an active debug-probe session from the page.
+  z.object({ type: z.literal("probe-end"), deviceId: id }),
   z.object({ type: z.literal("approve"), id, allow: z.boolean() }),
   z.object({ type: z.literal("rpc"), request }),
 ]);

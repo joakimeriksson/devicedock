@@ -620,3 +620,34 @@ footer {
 .monitor > header > span:first-child { white-space: nowrap; }
 .monitor-actions { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 .monitor-actions select[aria-label="Monitor device"] { max-width: 170px; text-overflow: ellipsis; }
+
+/* Active debug-probe session: always visible, with a one-click cut-off. */
+.probe-banner {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  display: grid;
+  gap: 8px;
+}
+.probe-banner > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-radius: 10px;
+  font-weight: 600;
+}
+.probe-banner .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger-text);
+  margin-right: 6px;
+}

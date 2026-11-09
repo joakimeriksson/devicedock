@@ -5,7 +5,7 @@ export type Device = {
   id: string;
   generation: number;
   name: string;
-  kind: "serial" | "mock" | "sim";
+  kind: "serial" | "mock" | "sim" | "probe";
   simulated?: boolean;
   engine?: string;
   board?: string;
@@ -22,6 +22,7 @@ export class DeviceClient {
     device?: Device,
     args: Record<string, unknown> = {},
     lease?: string,
+    timeoutMs = 25000,
   ) {
     const r = request.parse({
       v: 1,
@@ -29,7 +30,7 @@ export class DeviceClient {
       op,
       deviceId: device?.id,
       generation: device?.generation,
-      deadline: Date.now() + 25000,
+      deadline: Date.now() + timeoutMs,
       args,
       lease,
     });
@@ -40,7 +41,7 @@ export class DeviceClient {
         Authorization: `Bearer ${this.token}`,
       },
       body: JSON.stringify({ client: this.client, request: r }),
-      signal: AbortSignal.timeout(26000),
+      signal: AbortSignal.timeout(timeoutMs + 1000),
     });
     if (!res.ok) throw Error(`Bridge returned HTTP ${res.status}`);
     const m = response.parse(await res.json());
