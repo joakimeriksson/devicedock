@@ -73,28 +73,53 @@ without first checking the device state. Autonomous mode ends by itself; then yo
 Opening the port can reset the board (normal for ESP32); a boot log afterwards is expected.
 
 ## 7. Debug probes (OpenOCD)
-A shared debug probe (`kind: "probe"`, e.g. the XDS110 on a TI LaunchPad) gives OpenOCD/GDB full control of a real chip:
-halt, read and erase flash, change protection settings. It has **no serial port**; use the board's own serial device
-(shared separately) for its console.
-1. `device probe-open <id>` asks the human for **one** approval for a debug session (unless autonomous mode is on for
-   the probe). Do this first: OpenOCD gives up after 6 s, far less than a human needs to click.
-2. Run OpenOCD with the probe's `openocd` commands from `device list` (port 4441 is the first probe, 4442 the next).
-   Many OpenOCD runs fit in one session; it ends after 10 minutes without probe traffic, with
-   `device probe-close <id>`, or when the human clicks **Cut off**. Then OpenOCD fails with *No approved probe session*:
-   run `device probe-open` again, do not loop.
+A shared debug probe (`kind: "probe"`, e.g. the XDS110 on a TI LaunchPad) gives OpenOCD/GDB full control of a real
+chip: halt, read and erase flash, change protection settings. It has **no serial port**: the board's console is a
+separate `serial` device that the human shares separately. If you need the console and it is not listed, ask for it.
 
-Worked example, TI CC13x2 LaunchPad (verified with a local probe: plain JTAG over CMSIS-DAP finds the chip):
+**The sequence, every time** (verified end to end on a CC1352R1 LaunchPad, 2026-11-09):
 ```sh
-device probe-open <probe-id>
-openocd -c "adapter driver cmsis-dap; cmsis-dap backend tcp; cmsis-dap tcp host 127.0.0.1; cmsis-dap tcp port 4441" \
-        -c "transport select jtag; adapter speed 2500" -f target/ti/cc13x2.cfg \
-        -c "program build/simplelink/launchpad/cc1312r1/hello-world.simplelink verify reset exit"
+device list                                   # 1. take the probe id and its `openocd` line; take the serial id
+device probe-open <probe-id>                  # 2. ONE human approval opens a debug session (prints "Probe session opened")
+openocd -c "<the probe's openocd line from device list>" \
+        -c "transport select jtag; adapter speed 2000" -f target/ti/cc13x2.cfg \
+        -c "program <firmware.elf> verify reset; shutdown"      # 3. flash + verify + run
+device monitor <serial-id> --seconds 20       # 4. read what the firmware prints
 ```
-- Contiki-NG: `make TARGET=simplelink BOARD=launchpad/cc1312r1 hello-world` builds it; the `.simplelink` file is the ELF
-  (`gcc-arm-none-eabi` is installed);
-  LaunchPads have no serial bootloader upload, so flash with OpenOCD as above.
-- Expect roughly 10-30 KiB/s (each DAP packet makes a round trip through the browser). Never erase-and-lock or touch
-  protection/CCFG settings unless the human asked for exactly that: it can make a chip unrecoverable.
+- Run `probe-open` **before** OpenOCD: OpenOCD gives up after a few seconds, far less than a human needs to click.
+  If `probe-open` fails after ~25 s, nobody approved: tell the human, then retry once.
+- One session covers many OpenOCD runs. It ends after **10 minutes without probe traffic**, with
+  `device probe-close <id>`, or when the human clicks **Cut off**. OpenOCD then fails with
+  `CMSIS-DAP: TCP read timed out` or *No approved probe session*: run `device probe-open` again, do not loop.
+- End every OpenOCD command line with `shutdown` (not `exit`), so the probe is free for the next run.
+- Port 4441 is the first probe, 4442 the next: always copy the `openocd` line from `device list`.
+
+**Target configs** (under OpenOCD's `target/ti/`): `cc13x2.cfg` for CC13x2/CC26x2 LaunchPads (CC1352R1, CC1312R1,
+CC2652R1, ...), `cc26x2x7.cfg` for the 704 KB parts, `cc13x0.cfg`/`cc26x0.cfg` for older ones, `cc2538.cfg` for
+CC2538 (Zoul). The transport is JTAG for TI parts.
+
+**Contiki-NG on a LaunchPad:**
+```sh
+cd /workspace && git clone --recursive https://github.com/contiki-ng/contiki-ng.git   # once
+cd contiki-ng/examples/hello-world && make TARGET=simplelink BOARD=launchpad/cc1352r1
+# firmware: build/simplelink/launchpad/cc1352r1/hello-world.simplelink  (an ELF; give it to `program`)
+```
+Use the human's board name in `BOARD=`. If the tree has no submodules, add
+`CORE_SDK=<contiki-ng>/arch/cpu/simplelink-cc13xx-cc26xx/lib/coresdk_cc13xx_cc26xx` after cloning that SDK.
+LaunchPads are flashed with OpenOCD as above, not with Contiki's serial-bootloader `upload` target.
+
+**Other useful OpenOCD actions** (same first two `-c` arguments as above):
+- Reset and run: `-c "init; reset run; shutdown"`
+- Back up the whole flash first (CC13x2 352 KB, ~2 minutes): `-c "init; halt; dump_image /workspace/backup.bin 0 0x58000; resume; shutdown"`
+- Debug: leave OpenOCD running without `shutdown` (`-c "init; halt"`), then in another shell
+  `arm-none-eabi-gdb <firmware.elf> -ex "target extended-remote :3333"`.
+
+**Speed and safety.**
+- Expect about **3 KiB/s**: each DAP command makes a round trip through the browser. A 70 KB image takes ~1 minute
+  including verify, so do not treat a slow flash as a hang; wait at least 3 minutes before calling it stuck.
+- **Never** erase-and-lock, mass-erase, or touch protection or CCFG settings (the last flash page on CC13x2/CC26x2)
+  unless the human asked for exactly that. A wrong CCFG can disable debug access permanently.
+- Before overwriting firmware the human may want back, suggest a backup (above).
 
 ## 8. When your own shell commands fail
 You may be inside a container that cannot create the user namespaces some agents use for their private sandbox
