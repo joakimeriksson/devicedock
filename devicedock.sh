@@ -5,6 +5,9 @@ cd "$(dirname "$0")"
 PORT="${PORT:-47831}"
 RUN=.runtime; PIDFILE=$RUN/backend.pid; LOG=$RUN/backend.log
 IMAGE=devicedock-sandbox:local; CONTAINER=devicedock-sandbox
+# Which sandbox image: base | contiki | esp32 | full (see sandbox/Dockerfile). Published builds come from REMOTE.
+VARIANT="${DEVICEDOCK_VARIANT:-contiki}"
+REMOTE="${DEVICEDOCK_REMOTE:-ghcr.io/joakimeriksson/devicedock-sandbox}"
 mkdir -p "$RUN"
 
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -28,7 +31,13 @@ end_stray_codex() {
   docker exec $CONTAINER sh -c 'for p in /proc/[0-9]*; do case "$(tr "\\0" " " < $p/cmdline 2>/dev/null)" in */bin/codex*) kill ${p#/proc/} 2>/dev/null && echo "Ended unauthenticated codex (pid ${p#/proc/})";; esac; done'
 }
 
-cmd_build() { need_docker; say "Building frontend"; npm run -s build; say "Building sandbox image"; npm run -s sandbox:build; }
+build_image() { say "Building the sandbox image ($VARIANT) locally"; DEVICEDOCK_VARIANT=$VARIANT npm run -s sandbox:build; }
+# Download the published image for VARIANT and use it as the local sandbox image.
+cmd_pull() {
+  need_docker; say "Downloading $REMOTE:$VARIANT"
+  docker pull "$REMOTE:$VARIANT" && docker tag "$REMOTE:$VARIANT" $IMAGE && say "Using $REMOTE:$VARIANT (recreate the sandbox to switch: rs)"
+}
+cmd_build() { need_docker; say "Building frontend"; npm run -s build; build_image; }
 
 start_backend() {
   if [ -n "$(backend_pid)" ]; then
@@ -56,7 +65,7 @@ cmd_restart_backend() {
 
 cmd_start() {
   need_docker
-  docker image inspect $IMAGE >/dev/null 2>&1 || { say "Sandbox image missing, building"; npm run -s sandbox:build; }
+  docker image inspect $IMAGE >/dev/null 2>&1 || { say "Sandbox image missing"; cmd_pull || build_image; }
   [ -f dist/index.html ] || { say "Building frontend"; npm run -s build; }
   say "Starting sandbox container"; npm run -s sandbox:start
   end_stray_codex
@@ -124,7 +133,7 @@ console_status() {
   else printf 'backend  : \033[31mstopped\033[0m\n'; fi
   echo "web build: $(web_state)"
   if docker info >/dev/null 2>&1; then
-    if sandbox_running; then printf 'sandbox  : \033[32mrunning\033[0m  image %s\n' "$(image_state)"
+    if sandbox_running; then printf 'sandbox  : \033[32mrunning\033[0m  %s image, %s\n' "$(docker exec $CONTAINER cat /etc/devicedock-variant 2>/dev/null || echo older)" "$(image_state)"
       echo "devices  :"; docker exec $CONTAINER device list 2>&1 | sed 's/^/  /' | head -20
     else printf 'sandbox  : \033[31mstopped\033[0m\n'; fi
   else printf 'docker   : \033[31mNOT reachable\033[0m\n'; fi
@@ -134,7 +143,7 @@ console_status() {
 }
 console_help() {
   cat <<'H'
-commands:  s status   rb restart backend   rs recreate sandbox   w rebuild web   i rebuild image
+commands:  s status   rb restart backend   rs recreate sandbox   w rebuild web   i build image   p download image
            o login link   l backend log   d device list   sh sandbox shell   t tests   login <codex|claude|opencode>
            stop  stop everything   q quit (leave running)   x quit and stop everything   h help
 H
@@ -151,7 +160,8 @@ cmd_console() {
       rs) printf 'Recreate the sandbox container? Agent terminals end; volumes are kept. [y/N] '; read -r a
           [ "$a" = y ] && ( need_docker; npm run -s sandbox:clean; npm run -s sandbox:start; end_stray_codex ); console_status ;;
       w)  npm run -s build && say "Web rebuilt: reload the DeviceDock page" ;;
-      i)  ( need_docker; npm run -s sandbox:build ) && say "Image built: use rs to recreate the sandbox from it" ;;
+      i)  ( need_docker; build_image ) && say "Image built: use rs to recreate the sandbox from it" ;;
+      p)  ( cmd_pull ) ;;
       o)  npm run -s open ;;
       l)  tail -n 30 "$LOG" ;;
       d)  docker exec $CONTAINER device list ;;
@@ -178,7 +188,8 @@ case "${1:-console}" in
   logs)    tail -n 50 -f "$LOG" ;;
   login)   shift; cmd_login "${1:-}" ;;
   build)   cmd_build ;;
+  pull)    cmd_pull ;;
   test)    npm run -s typecheck && npm test ;;
   clean)   cmd_clean ;;
-  *) echo "usage: $0 {console (default)|start|stop|restart|restart-backend|status|open|logs|login <codex|claude|opencode>|build|test|clean}"; exit 1 ;;
+  *) echo "usage: $0 {console (default)|start|stop|restart|restart-backend|status|open|logs|login <codex|claude|opencode>|build|pull|test|clean}  (DEVICEDOCK_VARIANT=base|contiki|esp32|full, default contiki)"; exit 1 ;;
 esac
