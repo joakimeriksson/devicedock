@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeviceDock</title>
+<meta name="description" content="Let AI coding agents build, flash and debug real hardware from a locked-down sandbox, while you decide what they may touch.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #F6F7F3; --ink: #16211C; --mask: #1E6A48; --mask-deep: #174F37;
+  --silk: #EAF2EC; --copper: #C08A3E; --muted: #5B6B63; --line: #D9DED8; --card: #FFFFFF;
+  --sans: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --paper: #0F1714; --ink: #E4ECE7; --muted: #93A49B; --line: #26332D; --card: #15201B; --mask: #24795A; --mask-deep: #123D2B; }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 400 17px/1.6 var(--sans); }
+a { color: var(--mask); text-underline-offset: 3px; }
+@media (prefers-color-scheme: dark) { a { color: #6FD0A3; } }
+a:focus-visible, button:focus-visible { outline: 3px solid var(--copper); outline-offset: 3px; border-radius: 4px; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+code, pre { font-family: var(--mono); font-size: 0.88em; }
+
+/* top bar */
+.top { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; color: var(--ink); text-decoration: none; letter-spacing: -0.01em; }
+.brand svg { width: 34px; height: 34px; }
+.top nav { display: flex; gap: 22px; font-size: 15px; }
+.top nav a { color: var(--muted); text-decoration: none; }
+.top nav a:hover { color: var(--ink); }
+
+/* hero */
+.hero { display: grid; grid-template-columns: 1fr 1.08fr; gap: 56px; align-items: center; padding: 48px 0 72px; }
+h1 { font-size: clamp(40px, 5.6vw, 64px); line-height: 1.04; letter-spacing: -0.03em; margin: 0 0 22px; font-weight: 700; }
+.lede { font-size: 20px; color: var(--muted); max-width: 32em; margin: 0 0 30px; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn { display: inline-block; padding: 12px 20px; border-radius: 8px; font-weight: 600; font-size: 16px; text-decoration: none; }
+.btn.primary { background: var(--mask); color: #fff; }
+.btn.primary:hover { background: var(--mask-deep); }
+.btn.ghost { color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--line); }
+.btn.ghost:hover { box-shadow: inset 0 0 0 1.5px var(--muted); }
+
+/* the board */
+.board { background: var(--mask-deep); border-radius: 18px; padding: 10px; box-shadow: 0 24px 60px -30px rgba(10, 40, 25, .55); }
+.board svg { display: block; width: 100%; height: auto; }
+.silk { fill: none; stroke: var(--silk); stroke-width: 1.4; opacity: .9; }
+.silk-text { fill: var(--silk); font: 600 15px var(--sans); }
+.silk-small { fill: var(--silk); opacity: .72; font: 400 12.5px var(--mono); }
+.trace { fill: none; stroke: var(--copper); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; opacity: .55; }
+.pad { fill: var(--copper); }
+.via { fill: var(--mask-deep); stroke: var(--copper); stroke-width: 2.4; }
+.pulse { fill: #FFE2A8; filter: drop-shadow(0 0 7px #FFC861); }
+.gate-ring { fill: none; stroke: var(--silk); stroke-width: 2; stroke-dasharray: 5 5; }
+.gate-ok { fill: #FFE2A8; font: 700 13px var(--sans); opacity: 0; }
+
+/* sections */
+section { padding: 72px 0; border-top: 1px solid var(--line); }
+h2 { font-size: clamp(28px, 3.4vw, 38px); line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 14px; }
+.sub { color: var(--muted); max-width: 40em; margin: 0 0 40px; font-size: 18px; }
+.steps { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; counter-reset: s; }
+.steps li { counter-increment: s; position: relative; padding-top: 52px; }
+.steps li::before { content: counter(s); position: absolute; top: 0; left: 0; width: 36px; height: 36px; border-radius: 50%;
+  border: 2px solid var(--copper); color: var(--copper); font: 600 16px/32px var(--mono); text-align: center; }
+.steps li:not(:last-child)::after { content: ""; position: absolute; top: 18px; left: 46px; right: -18px; height: 2px; background: var(--line); }
+.steps h3, .grid h3 { font-size: 18px; margin: 0 0 6px; }
+.steps p, .grid p { margin: 0; color: var(--muted); font-size: 16px; }
+
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 36px 40px; }
+.grid div { border-left: 3px solid var(--copper); padding-left: 18px; }
+
+.shot { margin: 0; }
+.shot img { width: 100%; height: auto; display: block; border-radius: 12px; border: 1px solid var(--line); }
+.shot figcaption { color: var(--muted); font-size: 15px; margin-top: 12px; }
+
+.safety { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 56px; align-items: start; }
+.rules { margin: 0; padding: 0; list-style: none; }
+.rules li { padding: 16px 0; border-bottom: 1px solid var(--line); }
+.rules li:first-child { padding-top: 0; }
+.rules strong { display: block; font-size: 17px; }
+.rules span { color: var(--muted); font-size: 16px; }
+
+pre.term { background: #101915; color: #DCE8E1; border-radius: 12px; padding: 22px 24px; overflow-x: auto; line-height: 1.7; margin: 0; }
+pre.term .c { color: #7E9289; }
+pre.term .p { color: var(--copper); user-select: none; }
+.start { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+.start p { color: var(--muted); }
+
+footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--muted); font-size: 15px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+@media (max-width: 900px) {
+  .hero, .safety, .start { grid-template-columns: 1fr; gap: 36px; }
+  .steps { grid-template-columns: 1fr 1fr; }
+  .steps li::after { display: none; }
+  .grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 560px) {
+  .wrap { padding: 0 16px; }
+  .top nav a:not(:last-child) { display: none; }
+  .steps, .grid { grid-template-columns: 1fr; }
+  section { padding: 52px 0; }
+  .hero { padding: 24px 0 52px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#">
+      <svg viewBox="0 0 34 34" aria-hidden="true"><rect width="34" height="34" rx="8" fill="#1E6A48"/><path d="M9 17h16M9 17l5-5M9 17l5 5M25 17l-5-5M25 17l-5 5" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      DeviceDock
+    </a>
+    <nav aria-label="Page">
+      <a href="#how">How it works</a>
+      <a href="#safety">Safety</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/joakimeriksson/devicedock">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div>
+        <h1>Your AI agent, on your real hardware.</h1>
+        <p class="lede">DeviceDock lets coding agents like Codex and Claude Code build, flash and debug the boards on your desk, from a locked-down Linux sandbox. You share each device from the browser and approve what touches it.</p>
+        <div class="cta">
+          <a class="btn primary" href="#start">Get started</a>
+          <a class="btn ghost" href="https://github.com/joakimeriksson/devicedock">View on GitHub</a>
+        </div>
+      </div>
+
+      <div class="board" role="img" aria-label="Diagram: the agent in its sandbox sends a request along a trace to your browser, where you approve it, and it continues to the board on your desk.">
+        <svg viewBox="0 0 560 400" aria-hidden="true">
+          <!-- board outline and mounting holes -->
+          <rect x="8" y="8" width="544" height="384" rx="12" class="silk" opacity=".35"/>
+          <circle cx="30" cy="30" r="7" class="silk" opacity=".5"/><circle cx="530" cy="30" r="7" class="silk" opacity=".5"/>
+          <circle cx="30" cy="370" r="7" class="silk" opacity=".5"/><circle cx="530" cy="370" r="7" class="silk" opacity=".5"/>
+
+          <!-- faint traces: the rest of the board -->
+          <path class="trace" d="M60 156 V330 H200" opacity=".18"/><path class="trace" d="M150 50 H420 V110" opacity=".18"/>
+          <path class="trace" d="M470 236 V150 H500" opacity=".18"/><path class="trace" d="M230 344 H330 V310" opacity=".18"/>
+          <circle cx="200" cy="330" r="5" class="via"/><circle cx="420" cy="110" r="5" class="via"/><circle cx="500" cy="150" r="5" class="via"/>
+
+          <!-- the request path: agent -> your browser -> board -->
+          <path id="trace" class="trace" d="M110 156 V174 Q110 186 122 186 H268 Q280 186 280 198 V280 Q280 292 292 292 H380"/>
+
+          <!-- agent sandbox -->
+          <rect x="40" y="60" width="140" height="96" rx="6" class="silk" style="fill:var(--mask-deep)"/>
+          <rect x="104" y="152" width="12" height="8" class="pad"/>
+          <text x="56" y="90" class="silk-text">Agent</text>
+          <text x="56" y="112" class="silk-small">in its sandbox</text>
+          <text x="56" y="132" class="silk-small">codex · claude</text>
+          <text x="40" y="178" class="silk-small">U1</text>
+
+          <!-- your browser: the gate -->
+          <rect x="210" y="140" width="140" height="104" rx="6" class="silk" style="fill:var(--mask-deep)"/>
+          <circle cx="280" cy="186" r="20" class="gate-ring"/>
+          <path d="M270 186 l7 7 l13 -14" stroke="#FFE2A8" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" class="gate-ok" id="tick"/>
+          <text x="280" y="226" class="silk-text" text-anchor="middle">Your browser</text>
+          <text x="280" y="128" class="gate-ok" id="okText" text-anchor="middle">Approved</text>
+          <text x="356" y="156" class="silk-small">U2</text>
+
+          <!-- the board on your desk -->
+          <rect x="380" y="244" width="140" height="96" rx="6" class="silk" style="fill:var(--mask-deep)"/>
+          <rect x="376" y="286" width="8" height="12" class="pad"/>
+          <text x="396" y="274" class="silk-text">Your board</text>
+          <text x="396" y="296" class="silk-small">serial · JTAG</text>
+          <text x="396" y="316" class="silk-small">ESP32 · CC1352</text>
+          <text x="380" y="362" class="silk-small">J1</text>
+
+          <circle r="8" class="pulse" id="pulse" cx="110" cy="156"/>
+        </svg>
+      </div>
+    </div>
+
+    <section id="how">
+      <h2>How it works</h2>
+      <p class="sub">The agent never sees your USB ports. Your browser holds the device and passes on only the requests you allow.</p>
+      <ol class="steps">
+        <li><h3>Start DeviceDock</h3><p>One command starts the sandbox and the local web page. Nothing is reachable from outside your machine.</p></li>
+        <li><h3>Share a device</h3><p>Pick a serial port or debug probe in Chrome. Only that device becomes visible to the sandbox.</p></li>
+        <li><h3>Let the agent work</h3><p>It builds firmware and talks to the board with the usual tools: OpenOCD, esptool, pyserial.</p></li>
+        <li><h3>Approve the writes</h3><p>Every write or reset waits for your click, unless you switch on a time-limited autonomous mode.</p></li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>What it works with today</h2>
+      <p class="sub">Tested with TI LaunchPads and ESP32 boards. Standard tools run unchanged inside the sandbox.</p>
+      <div class="grid">
+        <div><h3>Serial ports</h3><p>Any USB serial device through Web Serial, reachable in the sandbox as an RFC 2217 port for pyserial, esptool and PlatformIO.</p></div>
+        <div><h3>Debug probes</h3><p>CMSIS-DAP probes such as the XDS110 on LaunchPads, driven by OpenOCD for flashing, backups and GDB.</p></div>
+        <div><h3>ESP32 flashing</h3><p>esptool resets the chip into download mode over the shared port, then writes and verifies the image.</p></div>
+        <div><h3>Contiki-NG</h3><p>A ready Contiki-NG tree and toolchains in the sandbox image. Build hello-world for a LaunchPad in one command.</p></div>
+        <div><h3>Simulators</h3><p>Run the same firmware without hardware: Cooja-NG for Contiki-NG boards and esp32sim for ESP32s in the browser.</p></div>
+        <div><h3>Your agent</h3><p>Codex, Claude Code and OpenCode come installed, with terminals in the page and an MCP server for device access.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <figure class="shot">
+        <img src="screenshot.png" alt="The DeviceDock page: a Linux terminal and an agent terminal on the left; shared devices, approval controls and the serial monitor on the right." loading="lazy" width="1440" height="1180">
+        <figcaption>The DeviceDock page: terminals into the sandbox on the left, your shared devices and the serial monitor on the right.</figcaption>
+      </figure>
+    </section>
+
+    <section id="safety">
+      <div class="safety">
+        <div>
+          <h2>You stay in charge of the hardware</h2>
+          <p class="sub">Real hardware can be damaged or bricked. These limits are built in, not optional.</p>
+        </div>
+        <ul class="rules">
+          <li><strong>Nothing is shared until you share it</strong><span>The sandbox sees only the devices you pick in the browser, and loses them when you revoke access or close the page.</span></li>
+          <li><strong>Writes need your approval</strong><span>Each write, reset or flash on real hardware asks first. A probe session is approved once and ends after 10 idle minutes.</span></li>
+          <li><strong>Autonomy has an end time</strong><span>Autonomous mode lasts at most two hours and switches itself off.</span></li>
+          <li><strong>A sandbox that keeps to itself</strong><span>No home folder, credentials, Docker socket or host devices are mounted. Everything listens on your own machine only.</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="start">
+      <div class="start">
+        <div>
+          <h2>Get started</h2>
+          <p>You need Docker and Chrome or Edge. The backend is a single program; download it from Releases or let the script build it with Rust.</p>
+          <p>Prefer step by step? The <a href="https://github.com/joakimeriksson/devicedock/blob/main/QUICKSTART.md">quick start guide</a> covers Mac and Linux, picking a sandbox image, and your first board.</p>
+        </div>
+        <pre class="term"><span class="c"># clone and start everything</span>
+<span class="p">$ </span>git clone https://github.com/joakimeriksson/devicedock
+<span class="p">$ </span>cd devicedock
+<span class="p">$ </span>./devicedock.sh
+
+<span class="c"># then, in the console</span>
+<span class="p">devicedock&gt; </span>o      <span class="c"># open the page in Chrome</span></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>DeviceDock is an open project for hardware-in-the-loop work with AI agents.</span>
+    <a href="https://github.com/joakimeriksson/devicedock">github.com/joakimeriksson/devicedock</a>
+  </footer>
+</div>
+
+<script>
+// The one moving thing: a request travels to the browser, waits for approval, then reaches the board.
+(() => {
+  const path = document.getElementById("trace"), pulse = document.getElementById("pulse");
+  const ok = [document.getElementById("tick"), document.getElementById("okText")];
+  if (!path || matchMedia("(prefers-reduced-motion: reduce)").matches) { ok.forEach(e => e.style.opacity = 1); return; }
+  const len = path.getTotalLength();
+  let gate = 0, best = 1e9;
+  for (let d = 0; d <= len; d += 1) { const p = path.getPointAtLength(d), e = Math.hypot(p.x - 280, p.y - 186); if (e < best) { best = e; gate = d; } }
+  let t0 = null;
+  const at = d => { const p = path.getPointAtLength(d); pulse.setAttribute("cx", p.x); pulse.setAttribute("cy", p.y); };
+  function frame(ts) {
+    t0 ??= ts;
+    const t = (ts - t0) % 5200;
+    if (t < 1500) { at(gate * t / 1500); ok.forEach(e => e.style.opacity = 0); }
+    else if (t < 2600) { at(gate); ok.forEach(e => e.style.opacity = Math.min(1, (t - 1700) / 300)); }
+    else if (t < 4000) at(gate + (len - gate) * (t - 2600) / 1400);
+    else { at(len); ok.forEach(e => e.style.opacity = Math.max(0, 1 - (t - 4400) / 500)); }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
