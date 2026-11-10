@@ -22,6 +22,26 @@ The sections below are the full reference.
 commands; see [QUICKSTART.md](QUICKSTART.md#2-start-everything). One-shot forms also work:
 `./devicedock.sh start|stop|restart|restart-backend|status|open|logs|login <agent>|build|test|clean`.
 
+## Rust backend (no Node on the host)
+
+`server-rs/` is the host backend rewritten in Rust: one ~13 MB binary with the web UI embedded, a drop-in replacement
+for `apps/server` (same HTTP, WebSocket and bridge protocol, same `.runtime/` files, same security rules).
+`./devicedock.sh` uses it automatically when it finds `bin/devicedock` or `server-rs/target/release/devicedock`, and
+builds it with cargo when Rust is installed. `DEVICEDOCK_BACKEND=node` switches back to the Node backend.
+
+```sh
+devicedock serve                     # the backend (what ./devicedock.sh starts)
+devicedock open                      # mint a one-time login link and open Chrome
+devicedock sandbox start|stop|clean  # the hardened sandbox container
+devicedock login-codex               # codex login with the OAuth callback relay
+```
+
+Node is now only needed to *develop* the web UI (`npm run build`; the binary serves `./dist` when it exists, else its
+embedded copy). Tests: `cargo test --manifest-path server-rs/Cargo.toml` (broker and protocol), then
+`npx tsx --test tests/rust/parity.test.ts` (drives the real binary over the wire) and
+`node tests/rust/browser-smoke.mjs` (headless Chrome: login, share the mock, PING → PONG). CI
+(`.github/workflows/backend.yml`) builds macOS and static Linux binaries; a `v*` tag publishes them as a release.
+
 ## Setup on the Mac
 
 Prerequisites: Node 22.12+ (Node 24 LTS recommended), npm, Python and Xcode Command Line Tools for node-pty, a working Docker engine (including Colima), and Chrome or Edge for physical serial devices. No global npm installs are required. The current Mac has Node 26 and Codex 0.167.0; the Mac login is not copied into the container.

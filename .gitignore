@@ -7,3 +7,5 @@ playwright-report/
 # simulator engines installed by tools/sim/install-*.sh (large binaries, fetched not committed)
 apps/web/public/sim/esp32sim/
 apps/web/public/sim/profiles.json
+server-rs/target/
+bin/
