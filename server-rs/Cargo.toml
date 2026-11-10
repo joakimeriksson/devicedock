@@ -1,0 +1,33 @@
+[package]
+name = "devicedock"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "DeviceDock host backend: one self-contained binary (web UI embedded), no Node needed"
+
+[[bin]]
+name = "devicedock"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["ws"] }
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+indexmap = "2"
+rand = "0.8"
+hex = "0.4"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+rust-embed = { version = "8", features = ["include-exclude", "interpolate-folder-path"] }
+mime_guess = "2"
+portable-pty = "0.9"
+subtle = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

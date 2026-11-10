@@ -17,8 +17,10 @@ This page covers macOS and Linux. Allow **~30 minutes the first time**: most of 
 
 | You need | macOS | Linux |
 | --- | --- | --- |
-| Node.js 22.12 or newer | `brew install node` | your package manager or [nodejs.org](https://nodejs.org) |
-| Build tools (for the terminal component) | `xcode-select --install` | `sudo apt install build-essential python3` |
+| The backend: **one** of the three below | | |
+| a. a release binary (nothing else to install) | download `devicedock-aarch64-apple-darwin.tar.gz` (Apple silicon) or `-x86_64-apple-darwin` from the repository's Releases, unpack it to `bin/devicedock` | same, `devicedock-x86_64-unknown-linux-musl` or `-aarch64-unknown-linux-musl` |
+| b. Rust, and `./devicedock.sh` builds the binary once (about a minute) | `brew install rust` | `curl https://sh.rustup.rs -sSf \| sh` |
+| c. the original Node backend (also needed to *change* the web UI) | `brew install node` + `xcode-select --install` | Node 22.12+ + `sudo apt install build-essential python3` |
 | Docker | Docker Desktop, **or** `brew install colima docker && colima start --cpu 4 --memory 6` | Docker Engine (`docker info` must work **without sudo**) |
 | A browser with WebUSB / Web Serial | **Chrome** or **Edge** (not Safari, not Firefox) | **Chrome** or **Chromium** or **Edge** |
 

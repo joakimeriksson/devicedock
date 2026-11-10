@@ -1,0 +1,72 @@
+# Builds and tests the Rust backend (server-rs) with the web UI embedded, for macOS and Linux (static musl).
+# Pull requests and pushes to main: test + build, binaries kept as workflow artifacts for 14 days.
+# A tag v* additionally publishes them as a GitHub release (devicedock-<target>.tar.gz + SHA256SUMS).
+name: backend
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: [server-rs/**, apps/web/**, packages/**, tests/rust/**, package.json, package-lock.json, .github/workflows/backend.yml]
+  pull_request:
+    paths: [server-rs/**, apps/web/**, packages/**, tests/rust/**, package.json, package-lock.json, .github/workflows/backend.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, runner: macos-latest, native: true }
+          - { target: x86_64-apple-darwin, runner: macos-latest, native: false }
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-24.04, native: true }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-24.04-arm, native: true }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      # The web UI is built first: the release binary embeds dist/.
+      - run: npm ci && npm run build
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "${{ matrix.target }}" }
+      - if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: server-rs, key: "${{ matrix.target }}" }
+      - name: Unit tests
+        if: matrix.native
+        run: cargo test --manifest-path server-rs/Cargo.toml --target ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --manifest-path server-rs/Cargo.toml --target ${{ matrix.target }}
+      - name: Wire tests against the binary (same protocol as the Node backend)
+        if: matrix.native
+        run: DEVICEDOCK_BIN=server-rs/target/${{ matrix.target }}/release/devicedock npx tsx --test tests/rust/parity.test.ts
+      - name: Package
+        run: |
+          mkdir -p out && cp server-rs/target/${{ matrix.target }}/release/devicedock out/
+          tar -C out -czf devicedock-${{ matrix.target }}.tar.gz devicedock
+          ls -la devicedock-${{ matrix.target }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devicedock-${{ matrix.target }}
+          path: devicedock-${{ matrix.target }}.tar.gz
+          retention-days: 14
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: devicedock-*, merge-multiple: true }
+      - run: sha256sum devicedock-*.tar.gz > SHA256SUMS && cat SHA256SUMS
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --generate-notes devicedock-*.tar.gz SHA256SUMS

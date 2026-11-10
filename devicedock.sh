@@ -14,12 +14,32 @@ say() { printf '\033[1m%s\033[0m\n' "$*"; }
 die() { echo "error: $*" >&2; exit 1; }
 
 need_docker() { docker info >/dev/null 2>&1 || die "Docker is not reachable. Start it (e.g. 'colima start') and retry."; }
-[ -d node_modules ] || { say "Installing dependencies"; npm ci; }
+
+# Backend: the self-contained Rust binary (web UI embedded, no Node needed) when there is one; it is built with cargo
+# if cargo is installed. DEVICEDOCK_BACKEND=node forces the original Node backend, DEVICEDOCK_BIN picks a binary.
+find_bin() {
+  local b; for b in "${DEVICEDOCK_BIN:-}" bin/devicedock server-rs/target/release/devicedock; do
+    [ -n "$b" ] && [ -x "$b" ] && { echo "$b"; return; }; done; return 0
+}
+BIN=""
+if [ "${DEVICEDOCK_BACKEND:-auto}" != node ]; then
+  BIN=$(find_bin)
+  if [ -z "$BIN" ] && command -v cargo >/dev/null; then
+    say "Building the Rust backend (one time, about a minute)"
+    if [ ! -f dist/index.html ] && command -v npm >/dev/null; then [ -d node_modules ] || npm ci; npm run -s build; fi
+    cargo build --release --manifest-path server-rs/Cargo.toml && BIN=server-rs/target/release/devicedock
+  fi
+  [ -n "$BIN" ] || [ "${DEVICEDOCK_BACKEND:-auto}" = auto ] || die "no Rust backend binary; install cargo or put one in bin/devicedock"
+fi
+[ -n "$BIN" ] || [ -d node_modules ] || { say "Installing dependencies"; npm ci; }
+need_node() { command -v npm >/dev/null || die "this needs Node.js (only for developing the web UI)"; [ -d node_modules ] || npm ci; }
+ddctl() { if [ -n "$BIN" ]; then "$BIN" "$@"; else case "$1" in
+  sandbox) npm run -s "sandbox:$2" ;; open) npm run -s open ;; login-codex) npm run -s login:codex ;; esac; fi; }
 
 backend_pid() {
   # PID listening on our port, only if it is this project's backend.
   local pid; pid=$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)
-  [ -n "$pid" ] && ps -o command= -p "$pid" | grep -q "apps/server/index.ts" && echo "$pid" || true
+  [ -n "$pid" ] && ps -o command= -p "$pid" | grep -qE "apps/server/index.ts|devicedock serve" && echo "$pid" || true
 }
 sandbox_running() { [ "$(docker inspect -f '{{.State.Running}}' $CONTAINER 2>/dev/null || true)" = true ]; }
 
@@ -31,13 +51,13 @@ end_stray_codex() {
   docker exec $CONTAINER sh -c 'for p in /proc/[0-9]*; do case "$(tr "\\0" " " < $p/cmdline 2>/dev/null)" in */bin/codex*) kill ${p#/proc/} 2>/dev/null && echo "Ended unauthenticated codex (pid ${p#/proc/})";; esac; done'
 }
 
-build_image() { say "Building the sandbox image ($VARIANT) locally"; DEVICEDOCK_VARIANT=$VARIANT npm run -s sandbox:build; }
+build_image() { say "Building the sandbox image ($VARIANT) locally"; docker build --target "$VARIANT" -t $IMAGE -f sandbox/Dockerfile .; }
 # Download the published image for VARIANT and use it as the local sandbox image.
 cmd_pull() {
   need_docker; say "Downloading $REMOTE:$VARIANT"
   docker pull "$REMOTE:$VARIANT" && docker tag "$REMOTE:$VARIANT" $IMAGE && say "Using $REMOTE:$VARIANT (recreate the sandbox to switch: rs)"
 }
-cmd_build() { need_docker; say "Building frontend"; npm run -s build; build_image; }
+cmd_build() { need_docker; need_node; say "Building frontend"; npm run -s build; build_image; }
 
 start_backend() {
   if [ -n "$(backend_pid)" ]; then
@@ -45,7 +65,7 @@ start_backend() {
   else
     [ -z "$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null || true)" ] || die "port $PORT is used by another program"
     say "Starting backend on 127.0.0.1:$PORT"
-    nohup npm start >"$LOG" 2>&1 &
+    if [ -n "$BIN" ]; then nohup "$BIN" serve >"$LOG" 2>&1 & else nohup npm start >"$LOG" 2>&1 & fi
     echo $! >"$PIDFILE"
     for _ in $(seq 1 40); do
       curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break; sleep 0.5
@@ -66,8 +86,8 @@ cmd_restart_backend() {
 cmd_start() {
   need_docker
   docker image inspect $IMAGE >/dev/null 2>&1 || { say "Sandbox image missing"; cmd_pull || build_image; }
-  [ -f dist/index.html ] || { say "Building frontend"; npm run -s build; }
-  say "Starting sandbox container"; npm run -s sandbox:start
+  [ -n "$BIN" ] || [ -f dist/index.html ] || { say "Building frontend"; npm run -s build; }
+  say "Starting sandbox container"; ddctl sandbox start
   end_stray_codex
   start_backend
   cmd_status
@@ -79,7 +99,7 @@ cmd_stop() {
   if [ -n "$pid" ]; then say "Stopping backend ($pid)"; kill "$pid"; sleep 1; else echo "Backend not running"; fi
   rm -f "$PIDFILE"
   if docker info >/dev/null 2>&1 && docker inspect $CONTAINER >/dev/null 2>&1; then
-    say "Stopping sandbox (workspace and credentials preserved)"; npm run -s sandbox:stop
+    say "Stopping sandbox (workspace and credentials preserved)"; ddctl sandbox stop
   fi
 }
 
@@ -102,22 +122,28 @@ cmd_status() {
 cmd_login() {
   need_docker; sandbox_running || die "sandbox not running; run ./devicedock.sh start"
   case "${1:-}" in
-    codex)    exec npm run -s login:codex ;;
+    codex)    ddctl login-codex; exit ;;
     claude)   exec docker exec -it $CONTAINER claude auth login ;;
     opencode) exec docker exec -it $CONTAINER opencode auth login ;;
     *) die "usage: $0 login {codex|claude|opencode}" ;;
   esac
 }
 
+run_tests() {
+  if command -v cargo >/dev/null; then cargo test --manifest-path server-rs/Cargo.toml || return 1; fi
+  if command -v npm >/dev/null; then need_node; npm run -s typecheck && npm test || return 1
+    [ -x server-rs/target/release/devicedock ] && DEVICEDOCK_BIN=server-rs/target/release/devicedock npx tsx --test tests/rust/parity.test.ts; fi
+}
+
 cmd_clean() {
   cmd_stop
-  docker info >/dev/null 2>&1 && docker inspect $CONTAINER >/dev/null 2>&1 && npm run -s sandbox:clean
+  docker info >/dev/null 2>&1 && docker inspect $CONTAINER >/dev/null 2>&1 && ddctl sandbox clean
   say "Container removed. Volumes (devicedock-workspace, devicedock-home) kept."
 }
 
 # ---- interactive console: starts everything, shows status, takes restart commands ----
 web_state() {
-  [ -f dist/index.html ] || { echo "not built"; return; }
+  [ -f dist/index.html ] || { [ -n "$BIN" ] && echo "embedded in the backend binary" || echo "not built"; return; }
   local newer; newer=$(find apps/web/src packages -newer dist/index.html -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \) 2>/dev/null | grep -v node_modules | head -1)
   [ -n "$newer" ] && echo "STALE (changed: $newer)" || echo "up to date"
 }
@@ -158,15 +184,15 @@ cmd_console() {
       ""|s|status) console_status ;;
       rb) ( cmd_restart_backend ) ;;
       rs) printf 'Recreate the sandbox container? Agent terminals end; volumes are kept. [y/N] '; read -r a
-          [ "$a" = y ] && ( need_docker; npm run -s sandbox:clean; npm run -s sandbox:start; end_stray_codex ); console_status ;;
-      w)  npm run -s build && say "Web rebuilt: reload the DeviceDock page" ;;
+          [ "$a" = y ] && ( need_docker; ddctl sandbox clean; ddctl sandbox start; end_stray_codex ); console_status ;;
+      w)  ( need_node; npm run -s build ) && say "Web rebuilt: reload the DeviceDock page (served from ./dist)" ;;
       i)  ( need_docker; build_image ) && say "Image built: use rs to recreate the sandbox from it" ;;
       p)  ( cmd_pull ) ;;
-      o)  npm run -s open ;;
+      o)  ddctl open ;;
       l)  tail -n 30 "$LOG" ;;
       d)  docker exec $CONTAINER device list ;;
       sh) docker exec -it -w /workspace $CONTAINER bash -l ;;
-      t)  npm run -s typecheck && npm test ;;
+      t)  ( run_tests ) ;;
       login\ *) ( cmd_login "${line#login }" ) ;;
       stop) ( cmd_stop ) ;;
       x)  ( cmd_stop ); break ;;
@@ -184,12 +210,12 @@ case "${1:-console}" in
   restart) cmd_stop; cmd_start ;;
   restart-backend) cmd_restart_backend ;;
   status)  cmd_status ;;
-  open)    [ -n "$(backend_pid)" ] || die "backend not running"; npm run -s open ;;
+  open)    [ -n "$(backend_pid)" ] || die "backend not running"; ddctl open ;;
   logs)    tail -n 50 -f "$LOG" ;;
   login)   shift; cmd_login "${1:-}" ;;
   build)   cmd_build ;;
   pull)    cmd_pull ;;
-  test)    npm run -s typecheck && npm test ;;
+  test)    run_tests ;;
   clean)   cmd_clean ;;
   *) echo "usage: $0 {console (default)|start|stop|restart|restart-backend|status|open|logs|login <codex|claude|opencode>|build|pull|test|clean}  (DEVICEDOCK_VARIANT=base|contiki|esp32|full, default contiki)"; exit 1 ;;
 esac
