@@ -207,7 +207,7 @@ async fn http(app: Shared, req: Request) -> Response {
     }
     if path == "/api" || path.starts_with("/api/") {
         let Some(csrf) = app.session(h) else {
-            return json_response(StatusCode::UNAUTHORIZED, json!({"error": "Open the local session link using npm run open."}));
+            return json_response(StatusCode::UNAUTHORIZED, json!({"error": "Open a fresh login link: ./devicedock.sh, then type o."}));
         };
         if method != Method::GET && (origin != Some(&app.origin) || hdr(h, "x-csrf-token") != Some(&csrf)) {
             return StatusCode::FORBIDDEN.into_response();

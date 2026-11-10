@@ -42,33 +42,23 @@ embedded copy). Tests: `cargo test --manifest-path server-rs/Cargo.toml` (broker
 `node tests/rust/browser-smoke.mjs` (headless Chrome: login, share the mock, PING → PONG). CI
 (`.github/workflows/backend.yml`) builds macOS and static Linux binaries; a `v*` tag publishes them as a release.
 
-## Setup on the Mac
+## Node backend (for web UI development)
 
-Prerequisites: Node 22.12+ (Node 24 LTS recommended), npm, Python and Xcode Command Line Tools for node-pty, a working Docker engine (including Colima), and Chrome or Edge for physical serial devices. No global npm installs are required. The current Mac has Node 26 and Codex 0.167.0; the Mac login is not copied into the container.
-
-Run from this directory in a terminal with network, loopback, and Docker permissions:
-
-```sh
-npm install
-npm run typecheck
-npm run build
-npm test
-npm run sandbox:build
-npm run sandbox:start
-npm start
-```
-
-`package-lock.json` is now present following installation. Retain it in version control and use `npm ci` for repeatable installs. The Docker build uses that lockfile.
-
-In a second terminal, from the same directory:
+The original Node backend (`apps/server`) is kept for developing the web UI and as a fallback
+(`DEVICEDOCK_BACKEND=node ./devicedock.sh`). It needs Node 22.12+, npm, and Python plus a C toolchain for node-pty
+(macOS: `xcode-select --install`). Use `npm ci` (the lockfile is versioned):
 
 ```sh
-npm run open
+npm ci && npm run typecheck && npm run build && npm test
+npm run sandbox:build && npm run sandbox:start
+npm start            # backend; `npm run dev` restarts it on source changes
+npm run open         # in a second terminal: one-time login link
 ```
 
-This opens a one-time session URL on `http://127.0.0.1:47831`. Its fragment is removed immediately, exchanged for an HttpOnly SameSite=Strict session cookie, and never logged. Use this exact host, not `localhost`. The URL is stored locally in `.runtime/session-link` with mode 0600. An already authenticated browser can reload normally. Restart the backend to create a new bootstrap link if needed.
-
-`npm run dev` restarts the backend when its source changes. Run `npm run build` after frontend changes; the backend serves the production frontend from the same origin. Set `PORT` to change the browser port; the container bridge uses fixed loopback port 47832.
+Login links (from `./devicedock.sh` → `o`, `devicedock open` or `npm run open`) open `http://127.0.0.1:47831` with a
+one-time token in the fragment. It is removed immediately, exchanged for an HttpOnly SameSite=Strict session cookie,
+and never logged. Use this exact host, not `localhost`. Run `npm run build` after frontend changes; the backend serves
+the built UI from the same origin. `PORT` changes the browser port; the container bridge uses loopback port 47832.
 
 ## Verify the real container path
 
@@ -219,3 +209,7 @@ A simulated board appears as a normal device (kind `sim`, labelled `simulated` i
 esp32sim (WebAssembly): `tools/sim/install-esp32sim.sh /path/to/esp32sim` installs a built copy and a T-Display
 profile, then `npm run build`; the page offers **＋ Simulated ttgo-tdisplay**.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how to add another simulator and for the current limits.
+
+## License
+
+BSD 3-Clause, see [LICENSE](LICENSE).

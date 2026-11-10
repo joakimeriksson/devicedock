@@ -3,6 +3,7 @@ name = "devicedock"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "BSD-3-Clause"
 description = "DeviceDock host backend: one self-contained binary (web UI embedded), no Node needed"
 
 [[bin]]

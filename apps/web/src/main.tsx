@@ -649,8 +649,8 @@ function App() {
               </>
             ) : (
               <div className="panel empty">
-                Run <code>npm run open</code> to open an authenticated local
-                session.
+                Logged out. Run <code>./devicedock.sh</code> and type <code>o</code> for a
+                fresh login link.
               </div>
             )}
           </div>
