@@ -46,6 +46,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN echo 'export PATH="/opt/venv/bin:$PATH"' > /etc/profile.d/devicedock-venv.sh
 COPY packages ./packages
 COPY sandbox ./sandbox
+# esptool checks first that a shared real board is in autonomous mode (see sandbox/esptool-preflight.py).
+RUN for f in esptool esptool.py; do install -m 755 /opt/devicedock/sandbox/esptool-preflight.py /opt/venv/bin/$f; done
 # `claude`: installs Claude Code into the home volume the first time, then runs it (later starts are instant).
 RUN printf '%s\n' '#!/bin/sh' \
       'dir="$HOME/.devicedock/claude-code"; bin="$dir/node_modules/.bin/claude"' \

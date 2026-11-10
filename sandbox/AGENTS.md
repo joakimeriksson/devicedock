@@ -49,6 +49,12 @@ python -c "import serial; s=serial.serial_for_url('rfc2217://127.0.0.1:2217', 11
 ```
 Always take the URL from `device list`; do not assume 2217 is the device you want once a simulator is also shared.
 
+**esptool and `idf.py flash` on a real board need `"autonomous": true`** in `device list`. They reset the chip by
+toggling DTR/RTS many times in under a second, and without autonomous mode each toggle waits for a human click, so
+the flash fails after ~30 s with a misleading *connection failed (reader thread died)*. Check first; if it is `false`,
+ask the human to click **Autonomous 15 min** on that device, then run the command. `esptool` here refuses to start
+with an explanation in that case; `idf.py` uses its own esptool and does not, so check yourself before `idf.py flash`.
+
 ## 3. Talking to a device interactively (REPL, shell)
 ```sh
 device send <id> --text "print(6*7)\r" --read 3     # send, then print the reply for 3 s (same lease)
