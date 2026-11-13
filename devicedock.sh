@@ -41,6 +41,33 @@ backend_pid() {
   local pid; pid=$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)
   [ -n "$pid" ] && ps -o command= -p "$pid" | grep -qE "apps/server/index.ts|devicedock serve" && echo "$pid" || true
 }
+# Which backend a running pid is: the Node one (apps/server, which has no network firewall) or the Rust binary.
+backend_kind() { ps -o command= -p "$1" 2>/dev/null | grep -q "apps/server/index.ts" && echo "node, no firewall" || echo rust; }
+# Warning lines when the running Rust backend (pid $1) is out of date: a local build older than its sources, or a
+# binary that was rebuilt or replaced (the installer does that) after the backend started.
+# $2 = console names the console commands in the hints; otherwise the one-shot forms.
+backend_stale() {
+  local cmd bin newer local_build=server-rs/target/release/devicedock up="./devicedock.sh upgrade" rb="./devicedock.sh restart-backend"
+  cmd=$(ps -o command= -p "$1" 2>/dev/null || true); bin=${cmd%% *}
+  case "$cmd" in *" serve"*) ;; *) return 0 ;; esac
+  [ -f "$bin" ] || return 0
+  [ "$bin" != bin/devicedock ] || { up="devicedock upgrade"; rb="devicedock restart-backend"; }
+  [ "${2:-}" != console ] || { up=u; rb=rb; }
+  if [ "$bin" = "$local_build" ]; then
+    newer=$(find server-rs/src server-rs/Cargo.toml server-rs/Cargo.lock -newer "$bin" -type f 2>/dev/null | head -1 || true)
+    if [ -n "$newer" ]; then
+      echo "backend binary is OLDER than its sources (changed: $newer)."
+      echo "$up upgrades everything (also downloads the newest sandbox image), or rebuild only the backend:"
+      echo "cargo build --release --manifest-path server-rs/Cargo.toml, then $rb"
+      return 0
+    fi
+  fi
+  # Change time, not modification time: an installed binary keeps the modification time it was built with.
+  if [ -f "$PIDFILE" ] && [ -n "$(find "$bin" -newercm "$PIDFILE" 2>/dev/null)" ]; then
+    if [ "$bin" = "$local_build" ]; then echo "backend binary was rebuilt after this backend started (use: $rb)"
+    else echo "backend binary was replaced after this backend started (use: $up, or $rb for the backend only)"; fi
+  fi
+}
 sandbox_running() { [ "$(docker inspect -f '{{.State.Running}}' $CONTAINER 2>/dev/null || true)" = true ]; }
 
 # An unauthenticated Codex TUI holds its own login server on port 1455 in the
@@ -125,7 +152,8 @@ cmd_stop() {
 
 cmd_status() {
   local pid; pid=$(backend_pid)
-  if [ -n "$pid" ]; then echo "backend : running (pid $pid, http://127.0.0.1:$PORT)"; else echo "backend : stopped"; fi
+  if [ -n "$pid" ]; then echo "backend : running ($(backend_kind "$pid"), pid $pid, http://127.0.0.1:$PORT)"; else echo "backend : stopped"; fi
+  [ -z "$pid" ] || backend_stale "$pid" | sed 's/^/  /'
   if docker info >/dev/null 2>&1; then
     echo "docker  : ok"
     echo "sandbox : $(sandbox_running && echo running || echo stopped)"
@@ -165,7 +193,7 @@ cmd_clean() {
 web_state() {
   [ -f dist/index.html ] || { [ -n "$BIN" ] && echo "embedded in the backend binary" || echo "not built"; return; }
   local newer; newer=$(find apps/web/src packages -newer dist/index.html -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \) 2>/dev/null | grep -v node_modules | head -1)
-  [ -n "$newer" ] && echo "STALE (changed: $newer)" || echo "up to date"
+  [ -n "$newer" ] && echo "STALE (changed: $newer; use: w)" || echo "up to date"
 }
 image_state() {
   docker image inspect $IMAGE >/dev/null 2>&1 || { echo "missing"; return; }
@@ -175,8 +203,9 @@ image_state() {
 console_status() {
   local pid; pid=$(backend_pid)
   printf '\n\033[1m── DeviceDock %s ──\033[0m\n' "$(date +%T)"
-  if [ -n "$pid" ]; then printf 'backend  : \033[32mrunning\033[0m pid %s  http://127.0.0.1:%s\n' "$pid" "$PORT"
+  if [ -n "$pid" ]; then printf 'backend  : \033[32mrunning\033[0m (%s) pid %s  http://127.0.0.1:%s\n' "$(backend_kind "$pid")" "$pid" "$PORT"
   else printf 'backend  : \033[31mstopped\033[0m\n'; fi
+  [ -z "$pid" ] || backend_stale "$pid" console | while IFS= read -r l; do printf '  \033[33m%s\033[0m\n' "$l"; done
   echo "web build: $(web_state)"
   if docker info >/dev/null 2>&1; then
     if sandbox_running; then printf 'sandbox  : \033[32mrunning\033[0m  %s image, %s\n' "$(docker exec $CONTAINER cat /etc/devicedock-variant 2>/dev/null || echo older)" "$(image_state)"
