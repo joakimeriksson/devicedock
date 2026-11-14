@@ -632,6 +632,8 @@ mod tests {
         for bad in [
             "/%2Fetc/hosts", "/%2f%2fetc/hosts", "/assets/%2F/etc/hosts/../..", "/../x", "/%2e%2e/x", "/a/../../x",
             "/.runtime/admin-token", "/a/.hidden", "/a%5Cb", "/a%00b", "/%zz",
+            // An encoded slash between `..` segments, and an encoded dot reaching a hidden directory.
+            "/..%2F..%2FREADME.md", "/%2Eruntime/admin-token",
         ] {
             assert_eq!(static_rel(bad), None, "{bad}");
         }
