@@ -167,7 +167,14 @@ export function Shares({ csrf }: { csrf: string }) {
           </ul>
           {!picker.shareable && picker.reason && <p className="network-note">{picker.reason}</p>}
           <div className="network-add">
-            <button onClick={() => setPicker(null)}>Cancel</button>
+            <button
+              onClick={() => {
+                setPicker(null);
+                setError("");
+              }}
+            >
+              Cancel
+            </button>
             <button className="primary" disabled={!picker.shareable} onClick={() => void add(picker.path)}>
               Share {picker.display}
             </button>
