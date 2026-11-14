@@ -61,5 +61,5 @@ Report security problems privately as described in [SECURITY.md](SECURITY.md), n
 ## Pull requests
 
 - One topic per pull request, with a description of what changed, why, and how you tested it.
-- Keep the style of the code around you; `cargo fmt` for Rust.
+- Keep the style of the code around you (Rust lines run to about 120 columns; the crate is not `cargo fmt` clean, so do not reformat whole files). `cargo clippy` must stay clean.
 - By contributing you agree that your work is released under the [BSD-3-Clause license](LICENSE).
