@@ -281,16 +281,35 @@ async fn shares_api(method: &Method, path: &str, body: &Value) -> Response {
     }
 }
 
-fn static_file(app: &App, path: &str, head: bool) -> Option<Response> {
+/// The request path as a plain relative path, or None (absolute like `/%2Fetc/hosts`, `..`, hidden, backslash).
+fn static_rel(path: &str) -> Option<String> {
     let mut rel = percent_decode(path.trim_start_matches('/'))?;
-    if rel.split('/').any(|seg| seg == ".." || seg.starts_with('.') && !seg.is_empty()) || rel.contains('\0') || rel.contains('\\') {
+    if rel.split('/').any(|seg| seg.starts_with('.')) || rel.contains('\0') || rel.contains('\\') {
+        return None;
+    }
+    if !std::path::Path::new(&rel).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
         return None;
     }
     if rel.is_empty() || rel.ends_with('/') {
         rel.push_str("index.html");
     }
+    Some(rel)
+}
+
+/// Reads `rel` only if it is inside `dir` after links are resolved.
+fn read_under(dir: &std::path::Path, rel: &str) -> Option<Vec<u8>> {
+    let root = std::fs::canonicalize(dir).ok()?;
+    let file = std::fs::canonicalize(root.join(rel)).ok()?;
+    if !file.starts_with(&root) {
+        return None;
+    }
+    std::fs::read(file).ok()
+}
+
+fn static_file(app: &App, path: &str, head: bool) -> Option<Response> {
+    let rel = static_rel(path)?;
     let bytes: Vec<u8> = match &app.disk_dist {
-        Some(dir) => std::fs::read(dir.join(&rel)).ok()?,
+        Some(dir) => read_under(dir, &rel)?,
         None => Embedded::get(&rel)?.data.into_owned(),
     };
     let mime = mime_guess::from_path(&rel).first_or_octet_stream();
@@ -598,4 +617,43 @@ where
     }
     writer.abort();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn static_paths_stay_relative() {
+        assert_eq!(static_rel("/").as_deref(), Some("index.html"));
+        assert_eq!(static_rel("/assets/app.js").as_deref(), Some("assets/app.js"));
+        assert_eq!(static_rel("/assets/").as_deref(), Some("assets/index.html"));
+        assert_eq!(static_rel("/a%20b.txt").as_deref(), Some("a b.txt"));
+        for bad in [
+            "/%2Fetc/hosts", "/%2f%2fetc/hosts", "/assets/%2F/etc/hosts/../..", "/../x", "/%2e%2e/x", "/a/../../x",
+            "/.runtime/admin-token", "/a/.hidden", "/a%5Cb", "/a%00b", "/%zz",
+        ] {
+            assert_eq!(static_rel(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn files_are_read_only_inside_the_web_root() {
+        let base = std::env::temp_dir().join(format!("dd-static-{}", random_hex()));
+        std::fs::create_dir_all(base.join("dist/assets")).unwrap();
+        std::fs::write(base.join("dist/index.html"), "page").unwrap();
+        std::fs::write(base.join("dist/assets/app.js"), "js").unwrap();
+        std::fs::write(base.join("outside.txt"), "secret").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(base.join("outside.txt"), base.join("dist/link.txt")).unwrap();
+        let dist = base.join("dist");
+        assert_eq!(read_under(&dist, "index.html").as_deref(), Some(&b"page"[..]));
+        assert_eq!(read_under(&dist, "assets/app.js").as_deref(), Some(&b"js"[..]));
+        assert_eq!(read_under(&dist, "missing.js"), None);
+        assert_eq!(read_under(&dist, &base.join("outside.txt").to_string_lossy()), None);
+        assert_eq!(read_under(&dist, "../outside.txt"), None);
+        #[cfg(unix)]
+        assert_eq!(read_under(&dist, "link.txt"), None);
+        std::fs::remove_dir_all(base).ok();
+    }
 }
