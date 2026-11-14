@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DeviceDock control script: ./devicedock.sh {console (default)|start|stop|restart|status|open|logs|login|build|test|clean}
+# DeviceDock control script: ./devicedock.sh {console (default)|start|stop|restart|status|open|logs|login|build|pull|upgrade|test|clean}
 set -euo pipefail
 cd "$(dirname "$0")"
 PORT="${PORT:-47831}"
@@ -51,13 +51,33 @@ end_stray_codex() {
   docker exec $CONTAINER sh -c 'for p in /proc/[0-9]*; do case "$(tr "\\0" " " < $p/cmdline 2>/dev/null)" in */bin/codex*) kill ${p#/proc/} 2>/dev/null && echo "Ended unauthenticated codex (pid ${p#/proc/})";; esac; done'
 }
 
-build_image() { say "Building the sandbox image ($VARIANT) locally"; docker build --target "$VARIANT" -t $IMAGE -f sandbox/Dockerfile .; }
+build_image() {
+  [ -f sandbox/Dockerfile ] || die "building the image needs a source checkout; download it instead (p)"
+  say "Building the sandbox image ($VARIANT) locally"; docker build --target "$VARIANT" -t $IMAGE -f sandbox/Dockerfile .; }
 # Download the published image for VARIANT and use it as the local sandbox image.
 cmd_pull() {
   need_docker; say "Downloading $REMOTE:$VARIANT"
   docker pull "$REMOTE:$VARIANT" && docker tag "$REMOTE:$VARIANT" $IMAGE && say "Using $REMOTE:$VARIANT (recreate the sandbox to switch: rs)"
 }
 cmd_build() { need_docker; need_node; say "Building frontend"; npm run -s build; build_image; }
+
+# Bring a running installation up to date: the newest published image for the sandbox's own variant, a sandbox
+# recreated from it (volumes, so files and agent logins, are kept), and a backend restarted on the current binary.
+# In a source checkout it also rebuilds the backend. The installer (install.sh) updates the binary itself.
+cmd_upgrade() {
+  need_docker
+  local v; v=$(docker exec $CONTAINER cat /etc/devicedock-variant 2>/dev/null || true)
+  VARIANT="${v:-$VARIANT}"
+  if [ "$BIN" = server-rs/target/release/devicedock ] && command -v cargo >/dev/null; then
+    say "Rebuilding the backend from this checkout"
+    if command -v npm >/dev/null; then need_node; npm run -s build; fi
+    cargo build --release --manifest-path server-rs/Cargo.toml || die "backend build failed"
+  fi
+  cmd_pull || die "could not download the sandbox image"
+  if docker inspect $CONTAINER >/dev/null 2>&1; then say "Recreating the sandbox (files and logins kept)"; ddctl sandbox clean; fi
+  ddctl sandbox start; end_stray_codex
+  cmd_restart_backend
+}
 
 start_backend() {
   if [ -n "$(backend_pid)" ]; then
@@ -162,7 +182,7 @@ console_status() {
     if sandbox_running; then printf 'sandbox  : \033[32mrunning\033[0m  %s image, %s\n' "$(docker exec $CONTAINER cat /etc/devicedock-variant 2>/dev/null || echo older)" "$(image_state)"
       if [ "$(docker inspect -f '{{index .Config.Labels "devicedock.network"}}' $CONTAINER 2>/dev/null)" = tunnel ]; then
         printf 'network  : \033[32mfirewall on\033[0m  (allowed sites only; Network panel in the page)\n'
-      else printf 'network  : \033[33mopen internet\033[0m  (older sandbox: get a current image with i or p, then rs)\n'; fi
+      else printf 'network  : \033[33mopen internet\033[0m  (older sandbox: u upgrades it)\n'; fi
       echo "devices  :"; docker exec $CONTAINER device list 2>&1 | sed 's/^/  /' | head -20
     else printf 'sandbox  : \033[31mstopped\033[0m\n'; fi
   else printf 'docker   : \033[31mNOT reachable\033[0m\n'; fi
@@ -172,8 +192,8 @@ console_status() {
 }
 console_help() {
   cat <<'H'
-commands:  s status   rb restart backend   rs recreate sandbox   w rebuild web   i build image   p download image
-           o login link   l backend log   d device list   sh sandbox shell   t tests   login <codex|claude|opencode>
+commands:  s status   rb restart backend   rs recreate sandbox   u upgrade (newest image + restart)
+           w rebuild web   i build image   p download image   o login link   l backend log   d device list   sh sandbox shell   t tests   login <codex|claude|opencode>
            stop  stop everything   q quit (leave running)   x quit and stop everything   h help
 H
 }
@@ -191,6 +211,8 @@ cmd_console() {
       w)  ( need_node; npm run -s build ) && say "Web rebuilt: reload the DeviceDock page (served from ./dist)" ;;
       i)  ( need_docker; build_image ) && say "Image built: use rs to recreate the sandbox from it" ;;
       p)  ( cmd_pull ) ;;
+      u)  printf 'Upgrade: download the newest sandbox image, recreate the sandbox and restart the backend.\nAgent terminals end; files and logins are kept. Continue? [y/N] '; read -r a
+          [ "$a" = y ] && ( cmd_upgrade ) ;;
       o)  ddctl open ;;
       l)  tail -n 30 "$LOG" ;;
       d)  docker exec $CONTAINER device list ;;
@@ -218,7 +240,8 @@ case "${1:-console}" in
   login)   shift; cmd_login "${1:-}" ;;
   build)   cmd_build ;;
   pull)    cmd_pull ;;
+  upgrade) cmd_upgrade ;;
   test)    run_tests ;;
   clean)   cmd_clean ;;
-  *) echo "usage: $0 {console (default)|start|stop|restart|restart-backend|status|open|logs|login <codex|claude|opencode>|build|pull|test|clean}  (DEVICEDOCK_VARIANT=base|contiki|esp32|full, default contiki)"; exit 1 ;;
+  *) echo "usage: $0 {console (default)|start|stop|restart|restart-backend|status|open|logs|login <codex|claude|opencode>|build|pull|upgrade|test|clean}  (DEVICEDOCK_VARIANT=base|contiki|esp32|full, default contiki)"; exit 1 ;;
 esac

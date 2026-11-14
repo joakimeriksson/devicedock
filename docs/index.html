@@ -227,13 +227,12 @@ footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--m
       <div class="start">
         <div>
           <h2>Get started</h2>
-          <p>You need Docker and Chrome or Edge. The backend is a single program; download it from Releases or let the script build it with Rust.</p>
+          <p>You need Docker and Chrome or Edge on macOS or Linux. The installer downloads the single backend program, checks its checksum, and puts a <code>devicedock</code> command in <code>~/.local/bin</code>; no root needed.</p>
           <p>Prefer step by step? The <a href="https://github.com/joakimeriksson/devicedock/blob/main/QUICKSTART.md">quick start guide</a> covers Mac and Linux, picking a sandbox image, and your first board.</p>
         </div>
-        <pre class="term"><span class="c"># clone and start everything</span>
-<span class="p">$ </span>git clone https://github.com/joakimeriksson/devicedock
-<span class="p">$ </span>cd devicedock
-<span class="p">$ </span>./devicedock.sh
+        <pre class="term"><span class="c"># install, then start everything</span>
+<span class="p">$ </span>curl -fsSL https://github.com/joakimeriksson/devicedock/releases/latest/download/install.sh | sh
+<span class="p">$ </span>devicedock
 
 <span class="c"># then, in the console</span>
 <span class="p">devicedock&gt; </span>o      <span class="c"># open the page in Chrome</span></pre>

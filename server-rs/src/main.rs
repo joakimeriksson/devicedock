@@ -110,18 +110,30 @@ async fn open() -> Result<(), String> {
     // WebSerial needs Chrome/Edge, and the one-time link is spent by whichever browser opens it first.
     // Override with BROWSER_APP="Microsoft Edge" (macOS app name).
     let app = std::env::var("BROWSER_APP").unwrap_or_else(|_| "Google Chrome".into());
-    let mut cmd = if cfg!(target_os = "macos") {
-        let mut c = std::process::Command::new("open");
-        c.args(["-a", &app, &link]);
-        c
+    // WSL: the browser (and the boards, through WebSerial) are on the Windows side; WSL forwards 127.0.0.1 to it.
+    let candidates: Vec<(&str, Vec<&str>)> = if cfg!(target_os = "macos") {
+        vec![("open", vec!["-a", &app, &link])]
+    } else if is_wsl() {
+        vec![("wslview", vec![&link]), ("cmd.exe", vec!["/c", "start", "", &link])]
     } else {
-        let mut c = std::process::Command::new("xdg-open");
-        c.arg(&link);
-        c
+        vec![("xdg-open", vec![&link])]
     };
-    cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().map_err(|e| e.to_string())?;
-    println!("Opened a login link in {}.", if cfg!(target_os = "macos") { app.as_str() } else { "your browser" });
+    let quiet = std::process::Stdio::null;
+    for (prog, args) in &candidates {
+        let r = std::process::Command::new(prog).args(args).stdin(quiet()).stdout(quiet()).stderr(quiet()).spawn();
+        if r.is_ok() {
+            println!("Opened a login link in {}.", if cfg!(target_os = "macos") { app.as_str() } else { "your browser" });
+            return Ok(());
+        }
+    }
+    // No way to open a browser from here (a server, a minimal WSL): show the link instead. It works once.
+    println!("Open this one-time login link in Chrome or Edge:\n  {link}");
     Ok(())
+}
+
+fn is_wsl() -> bool {
+    std::env::var_os("WSL_DISTRO_NAME").is_some()
+        || std::fs::read_to_string("/proc/sys/kernel/osrelease").is_ok_and(|s| s.to_lowercase().contains("microsoft"))
 }
 
 /// POST /admin/session-link over a raw loopback connection (no HTTP client dependency needed for one request).

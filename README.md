@@ -16,11 +16,41 @@ and a worked example that flashes Contiki-NG onto a TI LaunchPad through the bro
 Agents in the sandbox get their instructions from [sandbox/AGENTS.md](sandbox/AGENTS.md) (copied to `/workspace`).
 The sections below are the full reference.
 
+## Install
+
+On macOS or Linux, with Docker (Docker Desktop, Colima or Docker Engine) and Chrome or Edge:
+
+```sh
+curl -fsSL https://github.com/joakimeriksson/devicedock/releases/latest/download/install.sh | sh
+devicedock
+```
+
+The installer picks the build for your computer, checks it against the release's `SHA256SUMS`, and installs it in
+`~/.devicedock` with a `devicedock` command in `~/.local/bin`. It needs no root and touches nothing else. Read it
+first if you like: [install.sh](install.sh). `devicedock` then downloads the sandbox image (the first time, several
+GB), starts everything, and `o` in its console opens the page.
+
+**Updating:** run the installer again, then `devicedock upgrade` (or `u` in the console). That downloads the newest
+sandbox image for the variant you use, recreates the sandbox and restarts the backend. Files in `/workspace`, shared
+folders and agent logins are kept. **Coming from v0.1.0** (a sandbox with open internet)? Do the same; the console's
+`network` line then says *firewall on*.
+
+**From source:** `git clone` the repository and run `./devicedock.sh`; it builds the backend with cargo the first
+time. `./devicedock.sh upgrade` rebuilds it as well.
+
+### Windows: WSL 2 (not tested by us yet)
+
+DeviceDock should run inside WSL 2 (Ubuntu): install Docker (Docker Desktop with WSL integration, or Docker Engine
+inside WSL), then run the installer in the WSL shell. The page opens in Chrome or Edge on Windows (WSL forwards
+`127.0.0.1`), and boards plugged into Windows are shared through the browser's WebSerial/WebUSB, so no `usbipd` is
+needed. `devicedock open` uses `wslview` or `cmd.exe` to start the browser, or prints the link. If you try it,
+please open an issue with what worked and what did not.
+
 ## Control script
 
-`./devicedock.sh` (no arguments) starts everything and opens an interactive console with live status and restart
-commands; see [QUICKSTART.md](QUICKSTART.md#2-start-everything). One-shot forms also work:
-`./devicedock.sh start|stop|restart|restart-backend|status|open|logs|login <agent>|build|test|clean`.
+`devicedock` (installed) or `./devicedock.sh` (source checkout) with no arguments starts everything and opens an
+interactive console with live status and restart commands; see [QUICKSTART.md](QUICKSTART.md#2-start-everything).
+One-shot forms also work: `start|stop|restart|restart-backend|status|open|logs|login <agent>|pull|upgrade|build|test|clean`.
 
 ## Rust backend (no Node on the host)
 
