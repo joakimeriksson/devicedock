@@ -69,7 +69,7 @@ locally if the download is not available), starts the sandbox and the backend, a
 
 ```text
 ── DeviceDock 18:56:39 ──
-backend  : running pid 11248  http://127.0.0.1:47831
+backend  : running (rust) pid 11248  http://127.0.0.1:47831
 web build: up to date
 sandbox  : running  image ok
 devices  :
