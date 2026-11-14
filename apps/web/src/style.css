@@ -726,3 +726,24 @@ footer {
 .share-dirs button:hover { background: var(--input-bg); }
 .share-dirs button::before { content: "▸ "; color: var(--text-faint); }
 .share-empty { padding: 5px 4px; font-size: 12px; color: var(--text-faint); }
+
+/* Terminal header tools (copy, paste, find) and the search box over the terminal. */
+.terminal-tools { display: flex; align-items: center; gap: 6px; }
+.terminal-tools button { padding: 4px 9px; font-size: 11px; }
+.terminal-tools button[aria-pressed="true"] { border-color: var(--accent-border); background: var(--accent-bg); color: var(--accent-text); }
+.terminal-tools small { margin: 0 4px 0 0; white-space: nowrap; }
+.terminal-frame { position: relative; }
+.terminal-search {
+  position: absolute; top: 8px; right: 18px; z-index: 5;
+  display: flex; gap: 4px; padding: 5px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 7px;
+}
+.terminal-search input {
+  width: 180px; background: var(--input-bg); color: var(--input-text);
+  border: 1px solid var(--btn-border); border-radius: 5px; padding: 4px 7px; font-size: 12px;
+}
+.terminal-search button { padding: 3px 8px; font-size: 11px; }
+@media (max-width: 700px) {
+  .terminal-tools small { display: none; }
+}
+.terminal > header { flex-wrap: wrap; gap: 8px; }

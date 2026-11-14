@@ -177,6 +177,18 @@ Ask it something concrete, e.g. *"Make hello-world print a counter, flash it to 
 approval. To let the agent work alone for a while, turn on **Autonomous (15 / 60 min)** for that device; it switches
 itself off afterwards. **Cut off** in the page stops a debug session at once.
 
+**Terminals in the page.**
+
+| To | macOS | Linux / Windows |
+|---|---|---|
+| select text in an agent (it reads the mouse, so a plain drag goes to it) | ⌥-drag | Shift-drag |
+| copy the selection | ⌘C or **Copy** | Ctrl+Shift+C or **Copy** |
+| paste (long pastes are fine) | ⌘V or **Paste** | Ctrl+Shift+V or **Paste** |
+| search the scrollback (10 000 lines) | ⌘F or **Find** | Ctrl+Shift+F or **Find** |
+| open a link | click it | click it |
+
+The header says *⌥-drag to select* while the program in the terminal reads the mouse.
+
 ---
 
 ## 6. When something goes wrong
