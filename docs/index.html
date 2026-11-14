@@ -198,6 +198,9 @@ footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--m
         <div><h3>Contiki-NG</h3><p>A ready Contiki-NG tree and toolchains in the sandbox image. Build hello-world for a LaunchPad in one command.</p></div>
         <div><h3>Simulators</h3><p>Run the same firmware without hardware: Cooja-NG for Contiki-NG boards and esp32sim for ESP32s in the browser.</p></div>
         <div><h3>Your agent</h3><p>Codex, Claude Code and OpenCode come installed, with terminals in the page and an MCP server for device access.</p></div>
+        <div><h3>Network firewall</h3><p>The sandbox has no network of its own. Agents reach only the sites on your allow list, and a new site waits for your Allow in the page.</p></div>
+        <div><h3>Your project folders</h3><p>Share a project folder from your computer into the sandbox, read-write or read-only, chosen in the page.</p></div>
+        <div><h3>macOS and Linux</h3><p>One program and a one-line installer. Docker Desktop, Colima or Docker Engine. Windows through WSL 2 is next.</p></div>
       </div>
     </section>
 
@@ -218,7 +221,8 @@ footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--m
           <li><strong>Nothing is shared until you share it</strong><span>The sandbox sees only the devices you pick in the browser, and loses them when you revoke access or close the page.</span></li>
           <li><strong>Writes need your approval</strong><span>Each write, reset or flash on real hardware asks first. A probe session is approved once and ends after 10 idle minutes.</span></li>
           <li><strong>Autonomy has an end time</strong><span>Autonomous mode lasts at most two hours and switches itself off.</span></li>
-          <li><strong>A sandbox that keeps to itself</strong><span>No home folder, credentials, Docker socket or host devices are mounted. Everything listens on your own machine only.</span></li>
+          <li><strong>A sandbox that keeps to itself</strong><span>No credentials, Docker socket or host devices are mounted, only the project folders you share. Everything listens on your own machine only.</span></li>
+          <li><strong>The internet on your terms</strong><span>Agents reach only the sites you allow, by name, through DeviceDock. Never your local network.</span></li>
         </ul>
       </div>
     </section>

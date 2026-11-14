@@ -239,6 +239,9 @@ async fn http(app: Shared, req: Request) -> Response {
                 Err(e) => json_response(StatusCode::CONFLICT, json!({"error": e})),
             };
         }
+        if path == "/api/shares" || path.starts_with("/api/shares/") {
+            return shares_api(&method, &path, &json_body).await;
+        }
     }
     if method == Method::GET || method == Method::HEAD {
         if let Some(r) = static_file(&app, &path, method == Method::HEAD) {
@@ -246,6 +249,36 @@ async fn http(app: Shared, req: Request) -> Response {
         }
     }
     (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain; charset=utf-8")], "Not Found").into_response()
+}
+
+/// Shared folders (shares.rs). GET lists them; POST /api/shares stores a new list; /browse lists subfolders for the
+/// folder picker; /apply recreates the sandbox so the list takes effect.
+async fn shares_api(method: &Method, path: &str, body: &Value) -> Response {
+    use crate::shares;
+    let bad = |e: String| json_response(StatusCode::BAD_REQUEST, json!({"error": e}));
+    let rules = match shares::Rules::from_env() {
+        Ok(r) => r,
+        Err(e) => return json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": e})),
+    };
+    match (method.as_str(), path) {
+        ("GET", "/api/shares") => json_response(StatusCode::OK, shares::view().await),
+        ("POST", "/api/shares") => match shares::set(&rules, body) {
+            Ok(()) => json_response(StatusCode::OK, shares::view().await),
+            Err(e) => bad(e),
+        },
+        ("POST", "/api/shares/browse") => match shares::browse(&rules, body.get("path").and_then(Value::as_str)) {
+            Ok(v) => json_response(StatusCode::OK, v),
+            Err(e) => bad(e),
+        },
+        ("POST", "/api/shares/apply") => match crate::sandbox::recreate_sandbox().await {
+            Ok(()) => json_response(StatusCode::OK, shares::view().await),
+            Err(e) => {
+                let e: String = e.chars().take(500).collect();
+                json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": format!("Could not restart the sandbox: {e}")}))
+            }
+        },
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 fn static_file(app: &App, path: &str, head: bool) -> Option<Response> {

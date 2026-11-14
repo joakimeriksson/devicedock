@@ -76,6 +76,27 @@ also lists recent connections.
   created before, or from an older image, keeps its open network and published bridge port, and the panel says so;
   get a current image (console: `i` or `p`) and recreate the sandbox (`rs`).
 
+## Shared folders (Rust backend)
+
+The **Shared folders** panel in the page puts folders from your computer into the sandbox, so agents can work on your
+existing projects. **Add a folder…** opens a folder browser that starts in your home folder (or type a path such as
+`~/work/my-project`). Each folder appears in the sandbox at `/shares/<folder name>`, read-write unless you tick
+**read-only**.
+
+Docker attaches folders only when it creates a container, so a change shows **Restart needed**: **Restart sandbox**
+recreates it. Files in `/workspace` and your agent logins are kept (they are volumes); running agents, terminals and
+`/tmp` are not. The console's `rs` does the same.
+
+- **What can be shared:** a folder inside your home folder. Never the home folder itself, a hidden folder or
+  anything under one (`~/.ssh`, `~/.aws`, `~/.docker`, agent logins), `~/Library`, or a folder that contains
+  DeviceDock's own `.runtime`. Links are followed before the check, so a link to `~/.ssh` is refused too.
+- **Only the page can change shares** (session plus CSRF token). The sandbox cannot reach this API. The list is kept
+  in `.runtime/shares.json`.
+- **Agents can change anything in a read-write folder**, including `.git/hooks` and build scripts. Review their
+  changes before you run code from the folder on your computer, or share it read-only.
+- **Linux:** the sandbox user is UID 1000. If your files belong to another UID the folder may be read-only in
+  practice. Docker Desktop and Colima on macOS map ownership for you.
+
 ## Node backend (for web UI development)
 
 The original Node backend (`apps/server`) is kept for developing the web UI and as a fallback
@@ -178,7 +199,7 @@ through the tunnel it runs in the container (see "Network firewall"), so this wo
 and Linux, without `host.docker.internal`. The bridge exposes only the fixed device protocol, never host command
 execution. Terminals launch fixed `docker exec -it` commands; keyboard input is written only into those PTYs.
 
-Docker uses UID 1000, dropped capabilities, no-new-privileges, a read-only root, a limited `/tmp`, 2 CPUs, 2 GiB memory, a 256-process limit, and separate workspace/home volumes. Internet access goes only through the firewall (allowed host names, through the backend). No host USB device access or privileged mode is used.
+Docker uses UID 1000, dropped capabilities, no-new-privileges, a read-only root, a limited `/tmp`, 2 CPUs, 2 GiB memory, a 256-process limit, and separate workspace/home volumes, plus the folders you share at `/shares` (see "Shared folders"). Internet access goes only through the firewall (allowed host names, through the backend). No host USB device access or privileged mode is used.
 
 The device broker caps messages at 64 KiB, serial chunks at 16 KiB, the receive queue at 64 KiB per lease, devices at 32, pending operations at 64, browser WebSockets at eight, and monitor history at 150 entries. PTY scrollback is bounded, with a 30-second process retention window after disconnect. Device sharing is revoked immediately when the owning browser WebSocket disconnects and is never silently restored.
 

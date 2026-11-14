@@ -11,6 +11,7 @@ mod firewall;
 mod protocol;
 mod relay;
 mod sandbox;
+mod shares;
 mod terminals;
 mod tunnel;
 

@@ -13,6 +13,7 @@ import {
 } from "./adapters";
 import { Terminal, type TerminalKind } from "./Terminal";
 import { Network } from "./Network";
+import { Shares } from "./Shares";
 import { useTheme, type ThemePref } from "./theme";
 import "./sim/engines";
 import { SimAdapter } from "./sim/SimAdapter";
@@ -1026,6 +1027,7 @@ function App() {
               </div>
             </section>
             {csrf && <Network csrf={csrf} />}
+            {csrf && <Shares csrf={csrf} />}
           </aside>
         </div>
         <footer>

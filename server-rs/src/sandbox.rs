@@ -125,6 +125,15 @@ pub async fn start_sandbox() -> Result<(), String> {
             "--mount", "type=volume,src=devicedock-workspace,dst=/workspace",
             "--mount", "type=volume,src=devicedock-home,dst=/home/node",
         ];
+        // Host folders chosen in the page (shares.rs), mounted at /shares/<name>.
+        let share_args = match crate::shares::Rules::from_env() {
+            Ok(r) => crate::shares::run_args(&r),
+            Err(e) => {
+                eprintln!("Shared folders skipped: {e}");
+                vec![]
+            }
+        };
+        args.extend(share_args.iter().map(String::as_str));
         if tunnel {
             args.extend(["--network", "none", "--label", "devicedock.network=tunnel"]);
             for e in crate::firewall::PROXY_ENV {
@@ -163,4 +172,15 @@ pub async fn stop_sandbox() -> Result<(), String> {
 pub async fn clean_sandbox() -> Result<(), String> {
     verify_managed().await?;
     docker(&["rm", "-f", CONTAINER]).await.map(|_| ())
+}
+
+/// Recreates the sandbox so it picks up changed settings (shared folders). The volumes /workspace and /home/node are
+/// kept; running processes and /tmp are not. One at a time.
+pub async fn recreate_sandbox() -> Result<(), String> {
+    static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _g = LOCK.lock().await;
+    if sandbox_exists().await? {
+        clean_sandbox().await?;
+    }
+    start_sandbox().await
 }

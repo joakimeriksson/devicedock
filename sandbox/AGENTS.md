@@ -182,6 +182,15 @@ automatically. The human decides in the DeviceDock page which hosts are allowed:
 - IP addresses are never allowed, and neither are names that point to private or local addresses.
 - Do not stop or replace `devicedock tunnel`: it is also how the human's boards reach you.
 
+## 9b. Folders shared from the human's computer: `/shares`
+The human can share project folders from their computer in the DeviceDock page. Each one is at
+`/shares/<folder name>` (`ls /shares`; empty or missing means none are shared). Work in them as in any project:
+- A read-only share fails writes with "Read-only file system". Copy what you need to `/workspace`, or ask the human
+  to make it read-write.
+- Your changes there land directly on the human's computer. Keep them to what the task needs, do not touch
+  `.git/hooks`, CI files or build scripts unless asked, and say which files you changed.
+- You cannot add or remove shares; ask the human (Shared folders panel). Adding one restarts this sandbox.
+
 ## 10. The loop
 1. Write or change code in `/workspace`; build it (PlatformIO, arduino-cli, or MicroPython files).
 2. Flash or upload through the device's RFC 2217 URL (the reset into the bootloader is automatic).
