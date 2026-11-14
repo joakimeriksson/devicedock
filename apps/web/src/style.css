@@ -699,3 +699,30 @@ footer {
   position: fixed; right: 16px; bottom: 16px; z-index: 50; max-width: min(520px, calc(100vw - 32px));
   background: var(--surface); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
 }
+
+/* Shared folders panel (reuses the network panel's layout) */
+.shares .network-logtoggle { margin-bottom: 14px; }
+.share-list { list-style: none; padding: 0; margin-top: 12px; margin-bottom: 0; display: grid; gap: 6px; }
+.share-list li {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 7px;
+  border: 1px solid var(--border-soft); font-size: 12px;
+}
+.share-paths { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.share-paths span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.share-paths code { color: var(--text-dim); font-size: 11px; }
+.share-paths em { font-style: normal; color: var(--danger-text); font-size: 11px; }
+.share-list li.share-bad { border-color: var(--danger-border); }
+.share-ro { display: flex; align-items: center; gap: 4px; white-space: nowrap; cursor: pointer; color: var(--text-muted); }
+.share-pending { margin-top: 12px; }
+.share-picker { margin-top: 12px; margin-bottom: 14px; padding: 10px; border-radius: 7px; border: 1px solid var(--btn-border); }
+.share-crumb { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.share-crumb code { overflow-wrap: anywhere; }
+.share-dirs { list-style: none; padding: 0; margin: 8px 0 0; max-height: 220px; overflow: auto; border-top: 1px solid var(--border-soft); }
+.share-dirs li { border-bottom: 1px solid var(--border-soft); }
+.share-dirs button {
+  width: 100%; text-align: left; border: 0; background: none; padding: 5px 4px; border-radius: 0;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); cursor: pointer;
+}
+.share-dirs button:hover { background: var(--input-bg); }
+.share-dirs button::before { content: "▸ "; color: var(--text-faint); }
+.share-empty { padding: 5px 4px; font-size: 12px; color: var(--text-faint); }

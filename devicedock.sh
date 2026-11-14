@@ -164,6 +164,8 @@ console_status() {
         printf 'network  : \033[32mfirewall on\033[0m  (allowed sites only; Network panel in the page)\n'
       else printf 'network  : \033[33mopen internet\033[0m  (older sandbox: get a current image with i or p, then rs)\n'; fi
       echo "devices  :"; docker exec $CONTAINER device list 2>&1 | sed 's/^/  /' | head -20
+      local shares; shares=$(docker inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}} -> {{.Destination}}{{if not .RW}} (read-only){{end}}{{"\n"}}{{end}}{{end}}' $CONTAINER 2>/dev/null | sed '/^$/d' || true)
+      [ -n "$shares" ] && { echo "shares   :"; echo "$shares" | sed "s|^$HOME|~|; s/^/  /"; }
     else printf 'sandbox  : \033[31mstopped\033[0m\n'; fi
   else printf 'docker   : \033[31mNOT reachable\033[0m\n'; fi
   local errs; errs=$(grep -iE 'error|fail' "$LOG" 2>/dev/null | tail -3 || true)
