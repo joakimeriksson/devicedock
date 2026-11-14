@@ -50,6 +50,7 @@ pub struct App {
     bootstraps: Mutex<Vec<(String, i64)>>,
     sessions: Mutex<HashMap<String, SessionState>>,
     pub broker: Arc<Broker>,
+    pub firewall: Arc<crate::firewall::Firewall>,
     terminals: Terminals,
     ws_clients: AtomicUsize,
     /// Serve the web UI from ./dist when it exists (development), else from the copy embedded at build time.
@@ -72,6 +73,7 @@ impl App {
             bootstraps: Mutex::new(vec![(o.bootstrap, i64::MAX)]),
             sessions: Mutex::default(),
             broker: Broker::new(),
+            firewall: Arc::new(crate::firewall::Firewall::new()),
             terminals: Terminals::default(),
             ws_clients: AtomicUsize::new(0),
             disk_dist: disk.join("index.html").is_file().then(|| disk.to_path_buf()),
@@ -217,6 +219,25 @@ async fn http(app: Shared, req: Request) -> Response {
         }
         if method == Method::GET && path == "/api/health" {
             return json_response(StatusCode::OK, health().await);
+        }
+        if method == Method::GET && path == "/api/firewall" {
+            return json_response(StatusCode::OK, app.firewall.view());
+        }
+        if method == Method::POST && path == "/api/firewall" {
+            let r = crate::firewall::parse_policy(&json_body).and_then(|p| app.firewall.set_policy(p));
+            return match r {
+                Ok(()) => json_response(StatusCode::OK, app.firewall.view()),
+                Err(e) => json_response(StatusCode::BAD_REQUEST, json!({"error": e})),
+            };
+        }
+        if method == Method::POST && path == "/api/firewall/decide" {
+            let (Some(id), Some(allow)) = (json_body.get("id").and_then(Value::as_str), json_body.get("allow").and_then(Value::as_bool)) else {
+                return json_response(StatusCode::BAD_REQUEST, json!({"error": "id and allow are required"}));
+            };
+            return match app.firewall.answer(id, allow) {
+                Ok(()) => json_response(StatusCode::OK, app.firewall.view()),
+                Err(e) => json_response(StatusCode::CONFLICT, json!({"error": e})),
+            };
         }
     }
     if method == Method::GET || method == Method::HEAD {
@@ -459,14 +480,37 @@ pub fn spawn_bridge(app: Shared) {
 async fn bridge_once(app: &Shared) -> Result<(), String> {
     let token = bridge_token().map_err(|e| e.to_string())?;
     // DEVICEDOCK_BRIDGE_PORT lets the parity tests point the backend at a fake bridge.
-    let port = std::env::var("DEVICEDOCK_BRIDGE_PORT").ok().and_then(|p| p.parse::<u16>().ok()).unwrap_or(BRIDGE_PORT);
+    let test_port = std::env::var("DEVICEDOCK_BRIDGE_PORT").ok().and_then(|p| p.parse::<u16>().ok());
+    let port = test_port.unwrap_or(BRIDGE_PORT);
     let mut req = format!("ws://127.0.0.1:{port}/bridge").into_client_request().map_err(|e| e.to_string())?;
     req.headers_mut().insert("authorization", HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| e.to_string())?);
     let cfg = tungstenite::protocol::WebSocketConfig::default().max_message_size(Some(65536)).max_frame_size(Some(65536));
-    let (ws, _) = tokio::time::timeout(Duration::from_secs(5), tokio_tungstenite::connect_async_with_config(req, Some(cfg), false))
-        .await
-        .map_err(|_| "handshake timeout".to_string())?
-        .map_err(|e| e.to_string())?;
+    let timeout = |e: tokio::time::error::Elapsed| -> String {
+        let _ = e;
+        "handshake timeout".into()
+    };
+    // A sandbox without network is reached through the tunnel; an older one on its published loopback port.
+    if test_port.is_none() && app.firewall.mode() == crate::firewall::NetMode::Tunnel {
+        let mux = app.firewall.mux().ok_or("tunnel not connected yet")?;
+        let stream = mux.open(format!("tcp:{BRIDGE_PORT}").as_bytes()).await?;
+        let (ws, _) = tokio::time::timeout(Duration::from_secs(5), tokio_tungstenite::client_async_with_config(req, stream, Some(cfg)))
+            .await
+            .map_err(timeout)?
+            .map_err(|e| e.to_string())?;
+        bridge_session(app, ws).await
+    } else {
+        let (ws, _) = tokio::time::timeout(Duration::from_secs(5), tokio_tungstenite::connect_async_with_config(req, Some(cfg), false))
+            .await
+            .map_err(timeout)?
+            .map_err(|e| e.to_string())?;
+        bridge_session(app, ws).await
+    }
+}
+
+async fn bridge_session<S>(app: &Shared, ws: tokio_tungstenite::WebSocketStream<S>) -> Result<(), String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let (mut tx_ws, mut rx_ws) = ws.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     let writer = tokio::spawn(async move {

@@ -19,6 +19,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 RUN git clone https://github.com/mikroverk/cooja-ng.git /src && cd /src && git checkout "$COOJA_NG_COMMIT" \
  && make -j"$(nproc)" NATIVE_FLAG= WERROR=0 && make install PREFIX=/opt/cooja-ng NATIVE_FLAG= WERROR=0
 
+# DeviceDock's own binary, for `devicedock tunnel`: the sandbox runs with --network none, and this tunnel to the backend
+# (over `docker exec`) is its only network path, past the firewall. Same crate as the host backend (server-rs).
+FROM rust:1.99-bookworm AS devicedock-rs
+WORKDIR /src
+COPY server-rs ./server-rs
+RUN cargo build --release --locked --manifest-path server-rs/Cargo.toml \
+ && install -D -m 755 server-rs/target/release/devicedock /out/devicedock
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Image variants (docker build --target <variant>):
 #   base     DeviceDock bridge, agents, OpenOCD, ARM GCC, Cooja-NG, esptool/pyserial/mpremote
@@ -46,6 +54,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN echo 'export PATH="/opt/venv/bin:$PATH"' > /etc/profile.d/devicedock-venv.sh
 COPY packages ./packages
 COPY sandbox ./sandbox
+COPY --from=devicedock-rs /out/devicedock /opt/devicedock/bin/devicedock
 # esptool checks first that a shared real board is in autonomous mode (see sandbox/esptool-preflight.py).
 RUN for f in esptool esptool.py; do install -m 755 /opt/devicedock/sandbox/esptool-preflight.py /opt/venv/bin/$f; done
 # `claude`: installs Claude Code into the home volume the first time, then runs it (later starts are instant).
@@ -63,6 +72,8 @@ USER node
 WORKDIR /workspace
 ENV TERM=xterm-256color
 EXPOSE 47832
+# The backend starts the sandbox with --network none and the tunnel when it sees this label (server-rs/src/sandbox.rs).
+LABEL devicedock.tunnel=1
 CMD ["/opt/devicedock/node_modules/.bin/tsx","/opt/devicedock/sandbox/bridge-service/index.ts"]
 
 # ---- Contiki-NG: a read-only reference checkout with submodules; copy it to /workspace to work on it. ----

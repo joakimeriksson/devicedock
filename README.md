@@ -42,6 +42,40 @@ embedded copy). Tests: `cargo test --manifest-path server-rs/Cargo.toml` (broker
 `node tests/rust/browser-smoke.mjs` (headless Chrome: login, share the mock, PING → PONG). CI
 (`.github/workflows/backend.yml`) builds macOS and static Linux binaries; a `v*` tag publishes them as a release.
 
+## Network firewall (Rust backend)
+
+The sandbox has **no network of its own** (`--network none`). Its one way out is `devicedock tunnel`, which the
+backend starts inside it with `docker exec` and talks to over that process's stdin/stdout:
+
+```text
+ sandbox (--network none)                                       your laptop
+ curl / pip / git / claude / codex                              devicedock backend
+   └─► HTTPS_PROXY = 127.0.0.1:3128 ─► devicedock tunnel ═══════► firewall: your list? ask? private address?
+                                         (docker exec pipe)        └─► connects out from the laptop
+ bridge service :47832 ◄──────────────────────────────────────── the backend's device link, same pipe
+```
+
+In the page, the **Network** panel sets the mode: **Offline**, **Allow list** (default: AI agents, GitHub and package
+registries, embedded toolchains) or **Open**. A connection to a host that is not on the list waits up to 30 s for
+your **Allow** or **Block**; Allow adds the host to the list, Block stops asking about it for 10 minutes. The panel
+also lists recent connections.
+
+- **Host names only.** An IP address is refused, and so is a name that resolves to a private, loopback,
+  link-local or carrier-grade-NAT address: an allowed name can never reach your laptop or your local network.
+  Ports 80 and 443 unless an entry names another (`mqtt.example.com:8883`).
+- **The rules stay on the laptop** in `.runtime/firewall.json` (mode 0600). Nothing in the sandbox can change them.
+- **The tunnel is untrusted.** Any process in the sandbox can write to it, so the backend accepts only proxy streams
+  from it, enforces per-stream flow control (256 KiB in flight) and a 256-stream limit, and drops the pipe on any
+  protocol error. Killing the tunnel only cuts the sandbox off; the backend restarts it within a second.
+- **Measured** on a MacBook with Colima: about 19 MB/s through the tunnel (27 MB/s directly); the device link
+  stays responsive during a download.
+- **Limits.** It filters by host name, not by content: an allowed host can still receive data. Tools that ignore the
+  proxy settings (Node's built-in `fetch`, `git@` SSH URLs, raw sockets) cannot reach the internet. Only the Rust
+  backend runs the firewall.
+- **Older sandboxes.** The firewall needs an image with `devicedock tunnel` (label `devicedock.tunnel=1`). A sandbox
+  created before, or from an older image, keeps its open network and published bridge port, and the panel says so;
+  get a current image (console: `i` or `p`) and recreate the sandbox (`rs`).
+
 ## Node backend (for web UI development)
 
 The original Node backend (`apps/server`) is kept for developing the web UI and as a fallback
@@ -58,7 +92,8 @@ npm run open         # in a second terminal: one-time login link
 Login links (from `./devicedock.sh` → `o`, `devicedock open` or `npm run open`) open `http://127.0.0.1:47831` with a
 one-time token in the fragment. It is removed immediately, exchanged for an HttpOnly SameSite=Strict session cookie,
 and never logged. Use this exact host, not `localhost`. Run `npm run build` after frontend changes; the backend serves
-the built UI from the same origin. `PORT` changes the browser port; the container bridge uses loopback port 47832.
+the built UI from the same origin. `PORT` changes the browser port. The Node backend reaches the bridge on loopback
+port 47832, so it needs a sandbox with a published port (an older image); it does not run the firewall.
 
 ## Verify the real container path
 
@@ -131,16 +166,19 @@ Each CLI command acquires and releases its own exclusive lease. A monitor curren
 ## Architecture and boundaries
 
 ```text
-Browser adapter ↔ authenticated browser WebSocket ↔ Mac broker
-                                                      ↕ outbound WebSocket
-                              Docker loopback :47832 bridge service
+Browser adapter ↔ authenticated browser WebSocket ↔ Mac broker (Rust backend)
+                                                      ↕ WebSocket, carried by `devicedock tunnel` (docker exec pipe)
+                                         sandbox bridge service :47832 (inside the container)
                                                       ↕ authenticated HTTP
                                     container SDK / CLI / stdio MCP
 ```
 
-The Docker bridge listens inside the container and is published only to Mac loopback. The Mac connects outward, so this works without depending on `host.docker.internal`. The bridge exposes only the fixed device protocol, never host command execution. Terminals launch fixed `docker exec -it` commands using node-pty; keyboard input is written only into those PTYs.
+The sandbox has no network interface besides loopback and publishes no ports. The backend reaches the bridge service
+through the tunnel it runs in the container (see "Network firewall"), so this works the same on Docker Desktop, Colima
+and Linux, without `host.docker.internal`. The bridge exposes only the fixed device protocol, never host command
+execution. Terminals launch fixed `docker exec -it` commands; keyboard input is written only into those PTYs.
 
-Docker uses UID 1000, dropped capabilities, no-new-privileges, a read-only root, a limited `/tmp`, 2 CPUs, 2 GiB memory, a 256-process limit, and separate workspace/home volumes. Network access remains available inside the container for coding and agent services. No host USB device access or privileged mode is used.
+Docker uses UID 1000, dropped capabilities, no-new-privileges, a read-only root, a limited `/tmp`, 2 CPUs, 2 GiB memory, a 256-process limit, and separate workspace/home volumes. Internet access goes only through the firewall (allowed host names, through the backend). No host USB device access or privileged mode is used.
 
 The device broker caps messages at 64 KiB, serial chunks at 16 KiB, the receive queue at 64 KiB per lease, devices at 32, pending operations at 64, browser WebSockets at eight, and monitor history at 150 entries. PTY scrollback is bounded, with a 30-second process retention window after disconnect. Device sharing is revoked immediately when the owning browser WebSocket disconnects and is never silently restored.
 

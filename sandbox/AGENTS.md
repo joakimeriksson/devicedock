@@ -168,6 +168,20 @@ You may be inside a container that cannot create the user namespaces some agents
 is already the sandbox, and Codex can be started from the shell with `--sandbox danger-full-access` (or, only if
 they want no prompts at all, `--dangerously-bypass-approvals-and-sandbox`).
 
+## 9a. Internet access goes through the DeviceDock firewall
+This container has no network of its own. Everything goes through the proxy in `HTTPS_PROXY`
+(`http://127.0.0.1:3128`, served by `devicedock tunnel`), which curl, git (https), pip, npm and the agent tools use
+automatically. The human decides in the DeviceDock page which hosts are allowed:
+- An allowed host works as usual. A host that is not on the list makes the connection **wait up to 30 s** while the
+  page asks the human; if they click Block or do not answer, you get `403 Forbidden` with a "DeviceDock firewall"
+  message.
+- When something fails with that message, or with a DNS error (`EAI_AGAIN`, "Could not resolve host"), do not
+  retry in a loop or look for another way out: tell the human which host you need and why, and ask them to allow it
+  (Network panel). Tools that ignore `HTTPS_PROXY` (plain Node `fetch`, raw sockets, `git@` SSH URLs) cannot reach
+  the internet at all; use the HTTPS URL or a proxy-aware tool.
+- IP addresses are never allowed, and neither are names that point to private or local addresses.
+- Do not stop or replace `devicedock tunnel`: it is also how the human's boards reach you.
+
 ## 10. The loop
 1. Write or change code in `/workspace`; build it (PlatformIO, arduino-cli, or MicroPython files).
 2. Flash or upload through the device's RFC 2217 URL (the reset into the bootloader is automatic).

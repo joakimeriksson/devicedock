@@ -4,3 +4,5 @@ dist
 .git
 test-results
 playwright-report
+server-rs/target
+bin
