@@ -74,7 +74,9 @@ impl Terminals {
                 .openpty(PtySize { rows: 28, cols: 100, pixel_width: 0, pixel_height: 0 })
                 .map_err(|e| e.to_string())?;
             let mut cmd = CommandBuilder::new("docker");
-            cmd.args(["exec", "-it", "-w", "/workspace", CONTAINER]);
+            // UTF-8 so the shell takes å/ä/ö and emoji (the image has no LANG, which means plain C); COLORTERM tells the
+            // agents the page's terminal (xterm.js) shows 24-bit colour.
+            cmd.args(["exec", "-it", "-e", "LANG=C.UTF-8", "-e", "COLORTERM=truecolor", "-w", "/workspace", CONTAINER]);
             cmd.args(command(kind));
             cmd.env("TERM", "xterm-256color");
             let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;

@@ -35,6 +35,11 @@ export class Terminals {
         [
           "exec",
           "-it",
+          // UTF-8 input in the shell, and 24-bit colour in the agents (see server-rs/src/terminals.rs).
+          "-e",
+          "LANG=C.UTF-8",
+          "-e",
+          "COLORTERM=truecolor",
           "-w",
           "/workspace",
           container,
