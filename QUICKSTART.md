@@ -18,7 +18,7 @@ This page covers macOS and Linux. Allow **~30 minutes the first time**: most of 
 | You need | macOS | Linux |
 | --- | --- | --- |
 | The backend: **one** of the three below | | |
-| a. a release binary (nothing else to install) | download `devicedock-aarch64-apple-darwin.tar.gz` (Apple silicon) or `-x86_64-apple-darwin` from the repository's Releases, unpack it to `bin/devicedock` | same, `devicedock-x86_64-unknown-linux-musl` or `-aarch64-unknown-linux-musl` |
+| a. the installer (nothing else to install) | `curl -fsSL https://github.com/joakimeriksson/devicedock/releases/latest/download/install.sh \| sh` | same |
 | b. Rust, and `./devicedock.sh` builds the binary once (about a minute) | `brew install rust` | `curl https://sh.rustup.rs -sSf \| sh` |
 | c. the original Node backend (also needed to *change* the web UI) | `brew install node` + `xcode-select --install` | Node 22.12+ + `sudo apt install build-essential python3` |
 | Docker | Docker Desktop, **or** `brew install colima docker && colima start --cpu 4 --memory 6` | Docker Engine (`docker info` must work **without sudo**) |
@@ -42,7 +42,9 @@ Then **unplug and replug** the board. Other probes need their own line (`lsusb` 
 ## 2. Start everything
 
 ```sh
-git clone <this repository> && cd usb-agent-bridge
+devicedock                # if you used the installer (1a)
+# or, from a source checkout (1b, 1c):
+git clone https://github.com/joakimeriksson/devicedock && cd devicedock
 ./devicedock.sh
 ```
 
