@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useThemeName } from "./theme";
+import { chunkInput } from "./terminalInput";
 
 // Dark keeps xterm's default ANSI palette; light needs darker colours or bright yellow/cyan vanish on white.
 const TERM_THEMES = {
@@ -31,7 +32,7 @@ const TERM_THEMES = {
     brightWhite: "#2d3a45",
   },
 } as const;
-export type TerminalKind = "shell" | "codex" | "claude" | "opencode";
+export type TerminalKind ="shell" | "codex" | "claude" | "opencode";
 export const agentLabels: Record<Exclude<TerminalKind, "shell">, string> = {
   codex: "Codex",
   claude: "Claude Code",
@@ -60,6 +61,9 @@ export function Terminal({
       fontFamily: "SFMono-Regular, Menlo, monospace",
       scrollback: 2000,
       theme: { ...TERM_THEMES[themeRef.current] },
+      // Agent TUIs may turn on mouse reporting, which sends drags to the program instead of selecting.
+      // Option+drag (macOS) / Shift+drag (others) then still selects text for copying.
+      macOptionClickForcesSelection: true,
     });
     termRef.current = term;
     const fit = new FitAddon();
@@ -123,8 +127,26 @@ export function Terminal({
       };
     }
     connect();
+    // The backend takes at most 8192 UTF-16 units per input message and drops the session on more,
+    // so a long paste is sent in pieces (never splitting a surrogate pair).
     const input = term.onData((data) => {
-      if (ws.readyState === 1) ws.send(JSON.stringify({ type: "input", data }));
+      if (ws.readyState !== 1) return;
+      for (const piece of chunkInput(data)) ws.send(JSON.stringify({ type: "input", data: piece }));
+    });
+    // Linux/Windows: Ctrl+C and Ctrl+V belong to the program (interrupt, Claude Code's image paste),
+    // so Ctrl+Shift+C copies the selection and Ctrl+Shift+V pastes, like desktop terminals.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown" || !e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey) return true;
+      const key = e.key.toLowerCase();
+      if (key === "c") {
+        e.preventDefault();
+        const text = term.getSelection();
+        if (text) void navigator.clipboard?.writeText(text).catch(() => {});
+        return false;
+      }
+      // Let the browser run its own paste; xterm picks it up from the paste event.
+      if (key === "v") return false;
+      return true;
     });
     const observer = new ResizeObserver(() => {
       fit.fit();
