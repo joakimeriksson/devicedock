@@ -22,7 +22,7 @@ Revocation, browser loss, and unplug reject outstanding operations and invalidat
 
 The protocol validates operations and arguments with Zod, restricts bytes to base64, caps payloads and pending operations, and bounds per-lease receive buffers. Overflow is reported as data loss. Terminal and monitor histories are bounded. Unknown operations, including flashing, are rejected.
 
-Docker has no host device, home, credential, or Docker socket mounts. It runs non-root with dropped capabilities, no-new-privileges, resource limits, and a read-only root filesystem. Network access and writable home/workspace volumes are intentionally available. A compromised Docker engine or a malicious process running as the Mac user is not contained by this application.
+Docker has no host device, home, credential, or Docker socket mounts. It runs non-root with dropped capabilities, no-new-privileges, resource limits, and a read-only root filesystem. The container has no network of its own (`--network none`); internet access goes only through the backend's firewall (the tunnel), to host names the human allowed, never to private or local addresses. Writable home/workspace volumes are intentionally available. A compromised Docker engine or a malicious process running as the Mac user is not contained by this application.
 
 The Mac PTY layer uses fixed argument arrays. Browser input is never interpolated into host shell commands. The authenticated container bridge implements device RPC only, never host shell execution.
 

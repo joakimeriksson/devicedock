@@ -113,16 +113,29 @@ pub async fn start_sandbox() -> Result<(), String> {
     } else {
         docker(&["volume", "create", "devicedock-workspace"]).await?;
         docker(&["volume", "create", "devicedock-home"]).await?;
+        // Images with `devicedock tunnel` (label devicedock.tunnel=1) get no network at all: the backend reaches the
+        // bridge and the sandbox reaches the internet only through the tunnel, past the firewall (firewall.rs).
+        // Older images keep the previous setup: open network, bridge port published on the host's loopback.
+        let tunnel = docker(&["image", "inspect", "--format", "{{index .Config.Labels \"devicedock.tunnel\"}}", IMAGE]).await? == "1";
         let publish = format!("127.0.0.1:{BRIDGE_PORT}:47832");
-        docker(&[
-            "run", "-d", "--name", CONTAINER, "--label", "devicedock.managed=true", "--user", "1000:1000",
-            "--cap-drop=ALL", "--security-opt=no-new-privileges", "--cpus=2", "--memory=2g", "--pids-limit=256",
-            "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
+        let mut args: Vec<&str> = vec![
+            "run", "-d", "--name", CONTAINER, "--label", "devicedock.managed=true",
+            "--user", "1000:1000", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--cpus=2", "--memory=2g",
+            "--pids-limit=256", "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
             "--mount", "type=volume,src=devicedock-workspace,dst=/workspace",
             "--mount", "type=volume,src=devicedock-home,dst=/home/node",
-            "-p", &publish, IMAGE,
-        ])
-        .await?;
+        ];
+        if tunnel {
+            args.extend(["--network", "none", "--label", "devicedock.network=tunnel"]);
+            for e in crate::firewall::PROXY_ENV {
+                args.extend(["--env", e]);
+            }
+        } else {
+            eprintln!("This sandbox image has no network firewall (no `devicedock tunnel`): the sandbox gets open internet.");
+            args.extend(["-p", &publish]);
+        }
+        args.push(IMAGE);
+        docker(&args).await?;
     }
     // Send the token over stdin, never in command arguments or Docker environment metadata.
     let mut p = Command::new("docker")

@@ -3,13 +3,16 @@
 //!   open                       mint a fresh one-time login link and open it in Chrome (scripts/open.mjs)
 //!   sandbox start|stop|clean   manage the hardened sandbox container (scripts/sandbox.ts)
 //!   login-codex                run `codex login` in the sandbox with the OAuth callback relay (scripts/login-relay.ts)
+//!   tunnel                     inside the sandbox only: its network path to the backend (see tunnel.rs)
 //! Files live in ./.runtime and ./dist relative to the working directory, exactly like the Node backend.
 mod app;
 mod broker;
+mod firewall;
 mod protocol;
 mod relay;
 mod sandbox;
 mod terminals;
+mod tunnel;
 
 use std::process::ExitCode;
 
@@ -31,6 +34,7 @@ async fn main() -> ExitCode {
             .await
             .map(|_| println!("Container removed. Volumes preserved. See README for explicit data removal.")),
         ["login-codex"] => relay::login_codex().await,
+        ["tunnel"] => tunnel::run_in_sandbox().await,
         ["--version"] | ["version"] => {
             println!("devicedock {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -76,6 +80,7 @@ async fn serve() -> Result<(), String> {
     println!("DeviceDock listening on {}. Run ./devicedock.sh open to authenticate in your browser.", app.origin);
     if !test {
         app::spawn_bridge(app.clone());
+        tokio::spawn(app.firewall.clone().run_tunnel());
     }
     let router = axum::Router::new().fallback(app::handle).with_state(app.clone());
     let shutdown = {

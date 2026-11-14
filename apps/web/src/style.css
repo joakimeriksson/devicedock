@@ -657,3 +657,45 @@ footer {
 .confirm-box { max-width: 520px; width: 100%; padding: 20px; border-radius: 10px; background: var(--panel, #1b1f24); color: var(--text, #e6e6e6); border: 1px solid var(--border, #333); box-shadow: 0 10px 40px rgb(0 0 0 / 0.5); }
 .confirm-box p { margin: 0 0 16px; line-height: 1.45; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Network firewall panel */
+.network { margin-top: 14px; }
+.network > :not(header) { margin-left: 16px; margin-right: 16px; }
+.network .label.warn { color: var(--warn); }
+.network-note { font-size: 12px; color: var(--text-muted); margin-top: 8px; margin-bottom: 0; line-height: 1.45; }
+.network-modes { display: flex; gap: 6px; margin-top: 12px; }
+.network-modes button { flex: 1; }
+.network-asks { display: grid; gap: 6px; margin-top: 12px; }
+.network-ask, .network-toast {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 7px;
+  background: var(--notice-bg); border: 1px solid var(--warn); font-size: 12px;
+}
+.network-ask > span, .network-toast > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.network-presets { display: grid; gap: 6px; margin-top: 12px; font-size: 12px; }
+.network-presets label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.network-hosts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.network-hosts:empty { display: none; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 12px;
+  border: 1px solid var(--border-tag); font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--mono-text);
+}
+.chip button { border: 0; background: none; padding: 0 4px; color: var(--text-dim); cursor: pointer; }
+.chip button:hover { color: var(--danger-text); }
+.network-add { display: flex; gap: 6px; margin-top: 10px; }
+.network-add input {
+  flex: 1; min-width: 0; background: var(--input-bg); border: 1px solid var(--btn-border); border-radius: 5px;
+  color: var(--input-text); padding: 6px 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.network-error { color: var(--error-text); font-size: 12px; margin-top: 8px; margin-bottom: 0; }
+.network-logtoggle { margin-top: 12px; margin-bottom: 14px; font-size: 12px; }
+.network-log { list-style: none; padding: 0; margin-top: 0; margin-bottom: 14px; max-height: 220px; overflow: auto; font-size: 11px; }
+.network-log li { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; padding: 3px 0; border-top: 1px solid var(--border-soft); }
+.network-log time { color: var(--text-faint); }
+.network-log span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.network-log em { font-style: normal; color: var(--text-dim); }
+.network-log .r-blocked em, .network-log .r-denied em, .network-log .r-timeout em { color: var(--danger-text); }
+.network-log .r-approved em { color: var(--accent-text); }
+.network-toast {
+  position: fixed; right: 16px; bottom: 16px; z-index: 50; max-width: min(520px, calc(100vw - 32px));
+  background: var(--surface); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}

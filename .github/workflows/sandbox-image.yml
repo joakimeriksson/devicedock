@@ -6,9 +6,9 @@ name: sandbox-image
 on:
   push:
     branches: [main]
-    paths: [sandbox/**, packages/**, package.json, package-lock.json, scripts/prepare-pty.mjs, .github/workflows/sandbox-image.yml]
+    paths: [sandbox/**, server-rs/**, packages/**, package.json, package-lock.json, scripts/prepare-pty.mjs, .github/workflows/sandbox-image.yml]
   pull_request:
-    paths: [sandbox/**, packages/**, package.json, package-lock.json, scripts/prepare-pty.mjs, .github/workflows/sandbox-image.yml]
+    paths: [sandbox/**, server-rs/**, packages/**, package.json, package-lock.json, scripts/prepare-pty.mjs, .github/workflows/sandbox-image.yml]
   workflow_dispatch:
 
 permissions:
