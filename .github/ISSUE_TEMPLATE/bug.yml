@@ -1,0 +1,43 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations: { required: true }
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. ./devicedock.sh\n2. Share the board in the page\n3. ..."
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: DeviceDock version
+      description: "`devicedock --version` (or the git commit)"
+    validations: { required: true }
+  - type: input
+    id: system
+    attributes:
+      label: Computer and Docker
+      placeholder: "macOS 15 on M2, Colima 0.8 / Ubuntu 24.04, Docker Engine 27 / WSL 2"
+    validations: { required: true }
+  - type: input
+    id: image
+    attributes:
+      label: Sandbox image variant
+      description: base, contiki, esp32 or full (the console status shows it)
+  - type: input
+    id: board
+    attributes:
+      label: Board or probe, if any
+      placeholder: "ESP32-DevKitC over USB serial / TI LaunchPad CC1352R1 (XDS110)"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The console's `l` (backend log), terminal output, or the browser console. Remove anything private.
+      render: text
