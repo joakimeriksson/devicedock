@@ -47,7 +47,7 @@ sandbox_running() { [ "$(docker inspect -f '{{.State.Running}}' $CONTAINER 2>/de
 # container and hijacks the login callback. End it when Codex is not logged in.
 end_stray_codex() {
   sandbox_running || return 0
-  docker exec $CONTAINER codex login status >/dev/null 2>&1 && return 0
+  docker exec -e DEVICEDOCK_AGENT_NO_INSTALL=1 $CONTAINER codex login status >/dev/null 2>&1 && return 0
   docker exec $CONTAINER sh -c 'for p in /proc/[0-9]*; do case "$(tr "\\0" " " < $p/cmdline 2>/dev/null)" in */bin/codex*) kill ${p#/proc/} 2>/dev/null && echo "Ended unauthenticated codex (pid ${p#/proc/})";; esac; done'
 }
 
@@ -131,10 +131,11 @@ cmd_status() {
     echo "sandbox : $(sandbox_running && echo running || echo stopped)"
     if sandbox_running; then
       for a in codex claude opencode; do
-        printf '  %-9s %s\n' "$a" "$(docker exec $CONTAINER $a --version 2>&1 | head -1)"
+        printf '  %-9s %s\n' "$a" "$(docker exec -e DEVICEDOCK_AGENT_NO_INSTALL=1 $CONTAINER $a --version 2>&1 | head -1)"
       done
-      echo "  codex login : $(docker exec $CONTAINER codex login status 2>&1 | head -1)"
-      echo "  claude login: $(docker exec $CONTAINER claude auth status 2>&1 | grep -o '"loggedIn": *[a-z]*' | head -1)"
+      echo "  codex login : $(docker exec -e DEVICEDOCK_AGENT_NO_INSTALL=1 $CONTAINER codex login status 2>&1 | head -1)"
+      echo "  claude login: $(docker exec -e DEVICEDOCK_AGENT_NO_INSTALL=1 $CONTAINER claude auth status 2>&1 | grep -o '"loggedIn": *[a-z]*' | head -1)"
+      echo "  agent updates: $(docker exec $CONTAINER printenv DEVICEDOCK_AGENT_UPDATES 2>/dev/null || echo off)"
     fi
   else echo "docker  : NOT reachable"; fi
 }
@@ -196,6 +197,7 @@ console_help() {
   cat <<'H'
 commands:  s status   rb restart backend   rs recreate sandbox   u upgrade (newest image + restart)
            w rebuild web   i build image   p download image   o login link   l backend log   d device list   sh sandbox shell   t tests   login <codex|claude|opencode>
+           ra reset agents (back to the image's versions)
            stop  stop everything   q quit (leave running)   x quit and stop everything   h help
 H
 }
@@ -220,6 +222,11 @@ cmd_console() {
       d)  docker exec $CONTAINER device list ;;
       sh) docker exec -it -w /workspace $CONTAINER bash -l ;;
       t)  ( run_tests ) ;;
+      ra) echo "This removes the agents from the home volume, and anything else installed there with 'npm install -g'."
+          echo "They are set up again at the image's versions on next start; logins are kept."
+          echo "Agents that are running keep running until you restart their terminals."
+          printf 'Remove them? [y/N] '; read -r a
+          [ "$a" = y ] && docker exec $CONTAINER sh -c 'rm -rf "$HOME/.devicedock/agents" "$HOME/.devicedock/claude-code" "$HOME/.npm/_cacache"' && say "Agents removed: restart the agent terminals" ;;
       login\ *) ( cmd_login "${line#login }" ) ;;
       stop) ( cmd_stop ) ;;
       x)  ( cmd_stop ); break ;;

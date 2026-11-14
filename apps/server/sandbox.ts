@@ -30,7 +30,8 @@ export async function health() {
         container,
       ])) === "true";
     if (result.container) {
-      await docker(["exec", container, "codex", "--version"]);
+      // A probe must never set an agent up (sandbox/agent-wrapper.sh): it only runs what is there.
+      await docker(["exec", "-e", "DEVICEDOCK_AGENT_NO_INSTALL=1", container, "codex", "--version"]);
       result.agent = true;
     }
   } catch (e) {
@@ -63,6 +64,12 @@ export async function sandboxExists(run: typeof docker = docker) {
 }
 export async function startSandbox() {
   await mkdir(".runtime", { recursive: true, mode: 0o700 });
+  // Whether the agents may update themselves (sandbox/agent-wrapper.sh): off unless turned on.
+  // DEVICEDOCK_AGENT_UPDATES=on|off is remembered in .runtime, so every later (re)create uses it.
+  const wanted = process.env.DEVICEDOCK_AGENT_UPDATES;
+  if (wanted === "on" || wanted === "off") await writeFile(".runtime/agent-updates", wanted, { mode: 0o600 });
+  const agentUpdates =
+    (await readFile(".runtime/agent-updates", "utf8").catch(() => "")).trim() === "on" ? "on" : "off";
   let token: string;
   try {
     token = await getBridgeToken();
@@ -100,6 +107,8 @@ export async function startSandbox() {
       "type=volume,src=devicedock-home,dst=/home/node",
       "-p",
       `127.0.0.1:${bridgePort}:47832`,
+      "--env",
+      `DEVICEDOCK_AGENT_UPDATES=${agentUpdates}`,
       "devicedock-sandbox:local",
     ]);
   }

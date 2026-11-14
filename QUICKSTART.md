@@ -90,6 +90,7 @@ devicedock>
 | `w` / `i` | rebuild the web page / build the sandbox image locally |
 | `p` | download the published sandbox image (then `rs` to switch to it) |
 | `login claude` / `login codex` | log an agent in **inside the sandbox** |
+| `ra` | set the agents up again at the image's versions (also removes your `npm install -g` packages; logins are kept) |
 | `q` | leave the console, keep everything running |
 | `x` | stop everything and leave |
 

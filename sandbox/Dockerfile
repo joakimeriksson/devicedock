@@ -34,7 +34,9 @@ RUN cargo build --release --locked --manifest-path server-rs/Cargo.toml \
 #   esp32    base + ESP-IDF (/opt/esp-idf) for esp32, esp32s3, esp32c3, esp32c6
 #   full     contiki + esp32
 # Claude Code is NOT in any image (its licence is not a redistribution licence): `claude` installs it into the
-# home volume on first use. Codex (Apache-2.0) and OpenCode (MIT) are included.
+# home volume on first use. Codex (Apache-2.0) and OpenCode (MIT) are included, as pinned copies in /opt/agent.
+# All three run from a writable npm prefix in the home volume (see sandbox/agent-wrapper.sh). They stay at the
+# versions pinned here unless the user turns updates on (DEVICEDOCK_AGENT_UPDATES=on).
 # ---------------------------------------------------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS base
 ARG CLAUDE_CODE_VERSION=2.1.319
@@ -47,30 +49,29 @@ RUN ln -s /opt/cooja-ng/bin/cngsim /usr/local/bin/cngsim
 WORKDIR /opt/devicedock
 COPY package*.json ./
 COPY scripts/prepare-pty.mjs ./scripts/prepare-pty.mjs
-RUN npm ci && npm install --prefix /opt/agent @openai/codex@0.167.0 opencode-ai@1.19.5 && npm cache clean --force
+RUN npm ci && npm install -g --prefix /opt/agent @openai/codex@0.167.0 opencode-ai@1.19.5 && npm cache clean --force
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir esptool pyserial mpremote
 ENV PATH="/opt/venv/bin:$PATH"
 # Login shells (bash -l) reset PATH, so export it from profile.d as well.
-RUN echo 'export PATH="/opt/venv/bin:$PATH"' > /etc/profile.d/devicedock-venv.sh
+RUN echo 'export PATH="/opt/venv/bin:$PATH:/home/node/.devicedock/agents/bin"' > /etc/profile.d/devicedock-venv.sh
 COPY packages ./packages
 COPY sandbox ./sandbox
 COPY --from=devicedock-rs /out/devicedock /opt/devicedock/bin/devicedock
 # esptool checks first that a shared real board is in autonomous mode (see sandbox/esptool-preflight.py).
 RUN for f in esptool esptool.py; do install -m 755 /opt/devicedock/sandbox/esptool-preflight.py /opt/venv/bin/$f; done
-# `claude`: installs Claude Code into the home volume the first time, then runs it (later starts are instant).
-RUN printf '%s\n' '#!/bin/sh' \
-      'dir="$HOME/.devicedock/claude-code"; bin="$dir/node_modules/.bin/claude"' \
-      'if [ ! -x "$bin" ]; then' \
-      '  echo "Installing Claude Code '"$CLAUDE_CODE_VERSION"' into your home volume (first start only, about a minute)..." >&2' \
-      '  npm install --prefix "$dir" --no-fund --no-audit --loglevel=error "@anthropic-ai/claude-code@'"$CLAUDE_CODE_VERSION"'" >&2 || exit 1' \
-      'fi' \
-      'exec "$bin" "$@"' > /usr/local/bin/claude && chmod 755 /usr/local/bin/claude
+# claude, codex and opencode start through one wrapper that keeps them in the home volume, where they can update.
+RUN install -m 755 /opt/devicedock/sandbox/agent-wrapper.sh /usr/local/bin/devicedock-agent \
+ && for b in claude codex opencode; do ln -s devicedock-agent /usr/local/bin/$b; done \
+ && echo "$CLAUDE_CODE_VERSION" > /etc/devicedock-claude-version
 RUN printf '#!/bin/sh\nexec /opt/devicedock/node_modules/.bin/tsx /opt/devicedock/packages/device-client/cli.ts "$@"\n' > /usr/local/bin/device && chmod +x /usr/local/bin/device \
- && for b in codex opencode; do ln -s /opt/agent/node_modules/.bin/$b /usr/local/bin/$b; done && mkdir /workspace && chown node:node /workspace \
+ && mkdir /workspace && chown node:node /workspace \
  && echo base > /etc/devicedock-variant
 USER node
 WORKDIR /workspace
 ENV TERM=xterm-256color
+# npm's global prefix is in the home volume: the agents (and `npm install -g`) work on the read-only root.
+ENV NPM_CONFIG_PREFIX=/home/node/.devicedock/agents
+ENV PATH="$PATH:/home/node/.devicedock/agents/bin"
 EXPOSE 47832
 # The backend starts the sandbox with --network none and the tunnel when it sees this label (server-rs/src/sandbox.rs).
 LABEL devicedock.tunnel=1

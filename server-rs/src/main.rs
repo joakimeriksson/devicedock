@@ -24,6 +24,9 @@ fn port() -> u16 {
 #[tokio::main]
 async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(args.first().map(String::as_str), None | Some("serve" | "sandbox")) {
+        sandbox::remember_agent_updates();
+    }
     let r = match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         [] | ["serve"] => serve().await,
         ["open"] => open().await,
