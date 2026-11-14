@@ -180,6 +180,27 @@ Credentials live only in the `devicedock-home` Docker volume. Nothing is copied 
 
 To log out: `docker exec devicedock-sandbox codex logout` / `claude auth logout`, or remove the `devicedock-home` volume.
 
+## Agent versions and updates
+
+The agents run at the versions pinned in the sandbox image, which are the ones CI builds and we test. A new image
+(`u` / `devicedock upgrade`) brings new versions: an agent whose version differs from the image's is set up again
+on its next start. Their own updaters are turned off.
+
+They live in a writable npm prefix in the home volume (`~/.devicedock/agents`), because the image is read-only.
+Codex and OpenCode are copied there from the image on first start; Claude Code is installed from npm at the pinned
+version (its licence does not allow shipping it in the image).
+
+- **Let the agents update themselves:** start once with `DEVICEDOCK_AGENT_UPDATES=on ./devicedock.sh`, then `rs`.
+  The setting is remembered in `.runtime/agent-updates` and used every time the sandbox is created, from the page,
+  `rs` or an upgrade; `DEVICEDOCK_AGENT_UPDATES=off` turns it off again. `./devicedock.sh status` shows it. With
+  updates on, each agent updates the way it normally does (`claude update`, `codex update`, `opencode upgrade`, or
+  its own prompt) through the firewall (`registry.npmjs.org`), and an agent is only set up again when the image
+  has a newer version than the one installed. New versions then come straight from npm, unreviewed: see SECURITY.md.
+- **Start over:** `ra` in the console removes the agents from the home volume; they are set up again on next
+  start. This also removes anything you installed with `npm install -g` in the sandbox, which uses the same prefix.
+  Logins are kept.
+- The agents use about 1 GB of the home volume.
+
 ## Agent authentication and MCP
 
 From the Linux workspace terminal:

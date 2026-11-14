@@ -40,7 +40,8 @@ pub async fn health() -> Value {
         docker_ok = true;
         container = docker(&["inspect", "--format", "{{.State.Running}}", CONTAINER]).await? == "true";
         if container {
-            docker(&["exec", CONTAINER, "codex", "--version"]).await?;
+            // A probe must never set an agent up (sandbox/agent-wrapper.sh): it only runs what is there.
+            docker(&["exec", "-e", "DEVICEDOCK_AGENT_NO_INSTALL=1", CONTAINER, "codex", "--version"]).await?;
             agent = true;
         }
         Ok(())
@@ -97,6 +98,25 @@ pub fn write_secret(path: &str, content: &str) -> std::io::Result<()> {
     o.open(path)?.write_all(content.as_bytes())
 }
 
+const AGENT_UPDATES_FILE: &str = ".runtime/agent-updates";
+
+/// DEVICEDOCK_AGENT_UPDATES=on|off in the environment is remembered in .runtime, like the firewall and share
+/// settings, so that every later (re)create of the sandbox uses it: from the page, `rs` or an upgrade. Called once
+/// when a command starts, not at each (re)create: a long-running backend must not bring back the value it was
+/// started with after the user changed it.
+pub fn remember_agent_updates() {
+    if let Some(v @ ("on" | "off")) = std::env::var("DEVICEDOCK_AGENT_UPDATES").ok().as_deref() {
+        if ensure_runtime_dir().and_then(|_| write_secret(AGENT_UPDATES_FILE, v)).is_err() {
+            eprintln!("Could not save the agent updates setting in {AGENT_UPDATES_FILE}");
+        }
+    }
+}
+
+/// Whether the agents in the sandbox may update themselves. Off unless turned on.
+pub fn agent_updates() -> bool {
+    std::fs::read_to_string(AGENT_UPDATES_FILE).is_ok_and(|s| s.trim() == "on")
+}
+
 pub async fn start_sandbox() -> Result<(), String> {
     ensure_runtime_dir().map_err(|e| e.to_string())?;
     let token = match bridge_token() {
@@ -143,6 +163,8 @@ pub async fn start_sandbox() -> Result<(), String> {
             eprintln!("This sandbox image has no network firewall (no `devicedock tunnel`): the sandbox gets open internet.");
             args.extend(["-p", &publish]);
         }
+        // Whether the agents may update themselves (sandbox/agent-wrapper.sh); off unless the user turned it on.
+        args.extend(["--env", if agent_updates() { "DEVICEDOCK_AGENT_UPDATES=on" } else { "DEVICEDOCK_AGENT_UPDATES=off" }]);
         args.push(IMAGE);
         docker(&args).await?;
     }
