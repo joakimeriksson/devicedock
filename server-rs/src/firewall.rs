@@ -46,7 +46,8 @@ pub const PRESETS: &[Preset] = &[
         id: "agents",
         label: "AI agents (Claude, Codex, OpenCode)",
         hosts: &[
-            "api.anthropic.com", "claude.ai", "console.anthropic.com", "statsig.anthropic.com", "sentry.io",
+            "api.anthropic.com", "claude.ai", "platform.claude.com", "console.anthropic.com", "statsig.anthropic.com",
+            "sentry.io",
             "api.openai.com", "auth.openai.com", "chatgpt.com", "*.chatgpt.com", "opencode.ai", "models.dev",
         ],
     },
