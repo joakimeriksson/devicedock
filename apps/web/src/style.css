@@ -747,3 +747,53 @@ footer {
   .terminal-tools small { display: none; }
 }
 .terminal > header { flex-wrap: wrap; gap: 8px; }
+
+/* Pages: workspace and settings */
+.pages { display: flex; gap: 4px; margin-left: 18px; }
+.pages a {
+  color: var(--text-muted); text-decoration: none; font-size: 13px; letter-spacing: 0;
+  padding: 6px 11px; border-radius: 6px; display: inline-flex; align-items: center; gap: 6px;
+}
+.pages a:hover { background: var(--btn-bg); color: var(--btn-text); }
+.pages a[aria-current="page"] { background: var(--btn-bg); color: var(--text); font-weight: 600; }
+.pages a .dot { margin: 0; }
+.pages a:focus-visible, .summary-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* What the agent can reach, under the headline */
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; padding: 0; }
+.summary-item {
+  all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: auto 1fr;
+  column-gap: 8px; row-gap: 2px; align-items: baseline; padding: 13px 17px; font-size: 12px; color: var(--text-muted);
+}
+.summary-item + .summary-item { border-left: 1px solid var(--border-soft); }
+.summary-item:hover { background: var(--btn-bg); }
+.summary-item .dot { margin: 0; align-self: center; }
+.summary-item b { grid-column: 2; margin: 0; font-size: 14px; font-weight: 600; color: var(--text); }
+.summary-item small { grid-column: 2; font-size: 11px; color: var(--text-dim); }
+.summary-item.warn b, .summary-item.warn small { color: var(--warn); }
+.summary-label { grid-column: 2; grid-row: 1; font-size: 11px; color: var(--text-dim); }
+.summary-item .dot { grid-row: 1; }
+
+/* Settings page */
+.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px; align-items: start; }
+.settings-column { display: grid; gap: 20px; }
+.settings .panel { scroll-margin-top: 16px; }
+.about { display: grid; gap: 6px; margin: 14px 16px 4px; font-size: 12px; }
+.about div { display: grid; grid-template-columns: 150px 1fr; gap: 10px; }
+.about dt { color: var(--text-dim); }
+.about dd { margin: 0; color: var(--text); }
+
+@media (max-width: 950px) {
+  .summary-item + .summary-item { border-left: 0; }
+  .settings { grid-template-columns: 1fr; }
+}
+@media (max-width: 700px) {
+  .topbar { height: auto; min-height: 64px; flex-wrap: wrap; row-gap: 8px; padding: 10px 16px; }
+  .pages { order: 3; margin-left: 0; }
+  .brand { flex-wrap: wrap; }
+  .status-text { display: none; }
+  .topbar-right { gap: 10px; }
+  .about div { grid-template-columns: 1fr; gap: 0; }
+}
+.settings .network { margin-top: 0; }
+.settings .panel > :last-child:not(header) { margin-bottom: 16px; }

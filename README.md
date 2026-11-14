@@ -85,10 +85,11 @@ backend starts inside it with `docker exec` and talks to over that process's std
  bridge service :47832 ◄──────────────────────────────────────── the backend's device link, same pipe
 ```
 
-In the page, the **Network** panel sets the mode: **Offline**, **Allow list** (default: AI agents, GitHub and package
+In the page, **Settings → Internet** sets the mode: **Offline**, **Allow list** (default: AI agents, GitHub and package
 registries, embedded toolchains) or **Open**. A connection to a host that is not on the list waits up to 30 s for
-your **Allow** or **Block**; Allow adds the host to the list, Block stops asking about it for 10 minutes. The panel
-also lists recent connections.
+your **Allow** or **Block**, asked at the bottom of whichever page is open; Allow adds the host to the list, Block
+stops asking about it for 10 minutes. The panel also lists recent connections. The summary under the page's headline
+shows the mode and how many sites are allowed, and turns amber for **Open** or a sandbox without the firewall.
 
 - **Host names only.** An IP address is refused, and so is a name that resolves to a private, loopback,
   link-local or carrier-grade-NAT address: an allowed name can never reach your laptop or your local network.
@@ -108,7 +109,7 @@ also lists recent connections.
 
 ## Shared folders (Rust backend)
 
-The **Shared folders** panel in the page puts folders from your computer into the sandbox, so agents can work on your
+**Settings → Shared folders** in the page puts folders from your computer into the sandbox, so agents can work on your
 existing projects. **Add a folder…** opens a folder browser that starts in your home folder (or type a path such as
 `~/work/my-project`). Each folder appears in the sandbox at `/shares/<folder name>`, read-write unless you tick
 **read-only**.
@@ -190,7 +191,8 @@ They live in a writable npm prefix in the home volume (`~/.devicedock/agents`), 
 Codex and OpenCode are copied there from the image on first start; Claude Code is installed from npm at the pinned
 version (its licence does not allow shipping it in the image).
 
-- **Let the agents update themselves:** start once with `DEVICEDOCK_AGENT_UPDATES=on ./devicedock.sh`, then `rs`.
+- **Let the agents update themselves:** choose **Update themselves** in **Settings → Agent updates** in the page and
+  restart the sandbox there, or start once with `DEVICEDOCK_AGENT_UPDATES=on ./devicedock.sh`, then `rs`.
   The setting is remembered in `.runtime/agent-updates` and used every time the sandbox is created, from the page,
   `rs` or an upgrade; `DEVICEDOCK_AGENT_UPDATES=off` turns it off again. `./devicedock.sh status` shows it. With
   updates on, each agent updates the way it normally does (`claude update`, `codex update`, `opencode upgrade`, or

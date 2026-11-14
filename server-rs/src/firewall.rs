@@ -397,20 +397,23 @@ impl Firewall {
 
     /// The page's view: policy, presets, whether the firewall is in force, waiting questions, recent connections.
     pub fn view(&self) -> Value {
-        let (active, reason) = match (self.mode(), self.mux().is_some()) {
-            (NetMode::Tunnel, true) => (true, None),
-            (NetMode::Tunnel, false) => (false, Some("Connecting to the sandbox…")),
+        // `state` says why the firewall is not active, for the page's summary: only "open" needs the human.
+        let (active, state, reason) = match (self.mode(), self.mux().is_some()) {
+            (NetMode::Tunnel, true) => (true, "on", None),
+            (NetMode::Tunnel, false) => (false, "connecting", Some("Connecting to the sandbox…")),
             (NetMode::Open, _) => (
                 false,
+                "open",
                 Some("This sandbox has open internet: it was created before the firewall, or from an older image. Get a current image (console: i to build, or p to download) and recreate the sandbox (rs)."),
             ),
-            (NetMode::Absent, _) => (false, Some("The sandbox is not running.")),
+            (NetMode::Absent, _) => (false, "absent", Some("The sandbox is not running.")),
         };
         let live = self.live.lock().unwrap();
         let mut pending: Vec<&Pending> = live.pending.values().collect();
         pending.sort_by_key(|q| q.t);
         json!({
             "active": active,
+            "state": state,
             "reason": reason,
             "policy": self.policy(),
             "presets": PRESETS.iter().map(|p| json!({"id": p.id, "label": p.label, "hosts": p.hosts})).collect::<Vec<_>>(),
@@ -534,7 +537,7 @@ impl Firewall {
             self.record(&host, port, verdict.name());
             let why = if verdict == Verdict::Timeout { " (nobody answered in the page)" } else { "" };
             return reply(&mut s, 403, &format!(
-                "DeviceDock firewall: {host} is not allowed{why}. Ask the human to allow it in the DeviceDock page (Network)."
+                "DeviceDock firewall: {host} is not allowed{why}. Ask the human to allow it in the DeviceDock page (Settings → Internet)."
             ))
             .await;
         }

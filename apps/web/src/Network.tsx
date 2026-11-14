@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { postJson } from "./access";
 
 // The sandbox's network firewall: which internet hosts the sandbox may reach (through the tunnel to the backend's firewall).
 type Mode = "offline" | "allowlist" | "open";
@@ -6,8 +7,10 @@ type Policy = { mode: Mode; allow: string[] };
 type Ask = { id: string; host: string; port: number; t: number };
 type Entry = { t: number; host: string; port: number; result: string };
 type Preset = { id: string; label: string; hosts: string[] };
-type View = {
+export type FirewallView = {
   active: boolean;
+  /** Why it is (not) active: "open" is an older sandbox with open internet, the only state that needs the human. */
+  state?: "on" | "connecting" | "open" | "absent";
   reason?: string;
   policy: Policy;
   presets: Preset[];
@@ -32,41 +35,23 @@ const RESULT: Record<string, string> = {
 
 const hostLabel = (h: string, port: number) => (port === 443 || port === 80 ? h : `${h}:${port}`);
 
-export function Network({ csrf }: { csrf: string }) {
-  const [view, setView] = useState<View | null>(null);
+type Props = { csrf: string; view: FirewallView | null; setView: (v: FirewallView) => void };
+
+/** The firewall's settings: mode, allow list, waiting questions and the connection log (on the settings page). */
+export function Network({ csrf, view, setView }: Props) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [showLog, setShowLog] = useState(false);
 
-  useEffect(() => {
-    let alive = true;
-    const poll = () =>
-      fetch("/api/firewall")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((v) => alive && v && setView(v))
-        .catch(() => {});
-    void poll();
-    const t = setInterval(poll, 1500);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
-
   async function post(path: string, body: unknown) {
     setError("");
-    const r = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-      body: JSON.stringify(body),
-    });
-    const v = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      setError(v.error ?? `Failed (${r.status})`);
+    try {
+      setView(await postJson<FirewallView>(path, body, csrf));
+      return true;
+    } catch (e) {
+      setError((e as Error).message);
       return false;
     }
-    setView(v);
-    return true;
   }
   const save = (p: Policy) => post("/api/firewall", p);
 
@@ -91,11 +76,10 @@ export function Network({ csrf }: { csrf: string }) {
   const own = policy.allow.filter((h) => !presetHosts.has(h));
 
   return (
-    <>
-      <section className="panel network">
+    <section className="panel network" id="internet">
         <header>
           <span>
-            Network <small>{view.active ? MODES.find((m) => m.id === policy.mode)?.label : "firewall off"}</small>
+            Internet <small>{view.active ? MODES.find((m) => m.id === policy.mode)?.label : "firewall off"}</small>
           </span>
           <span className={view.active ? "label" : "label warn"}>{view.active ? "FIREWALL ON" : "NOT ACTIVE"}</span>
         </header>
@@ -192,20 +176,28 @@ export function Network({ csrf }: { csrf: string }) {
           </ul>
         )}
       </section>
-      {pending.length > 0 && (
-        <div className="network-toast" role="alert">
-          <span>
-            Network: the sandbox wants to reach <b>{hostLabel(pending[0].host, pending[0].port)}</b>
-            {pending.length > 1 && ` (+${pending.length - 1} more)`}
-          </span>
-          <button className="danger" onClick={() => void post("/api/firewall/decide", { id: pending[0].id, allow: false })}>
-            Block
-          </button>
-          <button className="primary" onClick={() => void post("/api/firewall/decide", { id: pending[0].id, allow: true })}>
-            Allow
-          </button>
-        </div>
-      )}
-    </>
+  );
+}
+
+/** A host the sandbox is waiting to reach, shown over every page: the firewall holds the connection until the human
+ * answers or the question times out. */
+export function FirewallAsks({ csrf, view, setView }: Props) {
+  const pending = view?.pending ?? [];
+  if (!pending.length) return null;
+  const decide = (allow: boolean) =>
+    postJson<FirewallView>("/api/firewall/decide", { id: pending[0].id, allow }, csrf).then(setView, () => {});
+  return (
+    <div className="network-toast" role="alert">
+      <span>
+        The sandbox wants to reach <b>{hostLabel(pending[0].host, pending[0].port)}</b>
+        {pending.length > 1 && ` (+${pending.length - 1} more)`}
+      </span>
+      <button className="danger" onClick={() => void decide(false)}>
+        Block
+      </button>
+      <button className="primary" onClick={() => void decide(true)}>
+        Allow
+      </button>
+    </div>
   );
 }

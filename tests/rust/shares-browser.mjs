@@ -37,6 +37,8 @@ try {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(url);
+  // Shared folders live on the settings page; the workspace summary links there.
+  await page.getByRole("navigation", { name: "Pages" }).getByRole("link", { name: "Settings" }).click();
   const panel = page.locator("section.shares");
   await panel.getByText("Shared folders").waitFor({ timeout: 15000 });
 

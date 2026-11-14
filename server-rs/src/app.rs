@@ -218,7 +218,33 @@ async fn http(app: Shared, req: Request) -> Response {
             return json_response(StatusCode::OK, json!({"csrf": csrf}));
         }
         if method == Method::GET && path == "/api/health" {
-            return json_response(StatusCode::OK, health().await);
+            let mut v = health().await;
+            v["version"] = json!(env!("CARGO_PKG_VERSION"));
+            return json_response(StatusCode::OK, v);
+        }
+        if path == "/api/agent-updates" {
+            use crate::sandbox::{agent_updates, running_agent_updates, set_agent_updates};
+            if method == Method::POST {
+                let Some(on) = json_body.get("on").and_then(Value::as_bool) else {
+                    return json_response(StatusCode::BAD_REQUEST, json!({"error": "on (true or false) is required"}));
+                };
+                if let Err(e) = set_agent_updates(on) {
+                    return json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": e.to_string()}));
+                }
+            }
+            if method == Method::GET || method == Method::POST {
+                return json_response(StatusCode::OK, json!({"on": agent_updates(), "running": running_agent_updates().await}));
+            }
+        }
+        // Recreates the sandbox so changed settings (shared folders, agent updates) take effect.
+        if method == Method::POST && path == "/api/sandbox/recreate" {
+            return match crate::sandbox::recreate_sandbox().await {
+                Ok(()) => json_response(StatusCode::OK, json!({"ok": true})),
+                Err(e) => {
+                    let e: String = e.chars().take(500).collect();
+                    json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": format!("Could not restart the sandbox: {e}")}))
+                }
+            };
         }
         if method == Method::GET && path == "/api/firewall" {
             return json_response(StatusCode::OK, app.firewall.view());

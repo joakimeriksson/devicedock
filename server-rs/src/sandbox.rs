@@ -117,6 +117,18 @@ pub fn agent_updates() -> bool {
     std::fs::read_to_string(AGENT_UPDATES_FILE).is_ok_and(|s| s.trim() == "on")
 }
 
+/// Saves the setting from the page; it takes effect when the sandbox is next created.
+pub fn set_agent_updates(on: bool) -> std::io::Result<()> {
+    ensure_runtime_dir()?;
+    write_secret(AGENT_UPDATES_FILE, if on { "on" } else { "off" })
+}
+
+/// The setting the running sandbox was created with, or None when there is no sandbox.
+pub async fn running_agent_updates() -> Option<bool> {
+    let env = docker(&["inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}", CONTAINER]).await.ok()?;
+    Some(env.lines().any(|l| l == "DEVICEDOCK_AGENT_UPDATES=on"))
+}
+
 pub async fn start_sandbox() -> Result<(), String> {
     ensure_runtime_dir().map_err(|e| e.to_string())?;
     let token = match bridge_token() {
