@@ -56,3 +56,10 @@ carries an `Origin` header, requires a bearer token from `.runtime/admin-token` 
 **never given to the container**, unlike the bridge token), mints links valid for 5 minutes, and allows at most
 5 unused links at once. Without the token file the endpoint is disabled.
 
+
+## Reporting a security problem
+
+Please report security problems privately through GitHub:
+[Report a vulnerability](https://github.com/joakimeriksson/devicedock/security/advisories/new) (Security tab →
+Report a vulnerability), not in a public issue. Describe what an attacker can do and how; a proof of concept helps.
+You will get an answer within a week. Fixes are released as soon as they are ready, with credit if you want it.

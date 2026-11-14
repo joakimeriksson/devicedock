@@ -1,0 +1,20 @@
+name: Idea or feature request
+description: Something DeviceDock should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you want to do?
+      description: The task you are trying to get done, with your board or setup if it matters.
+    validations: { required: true }
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could DeviceDock help?
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security
+      options:
+        - label: This does not need the sandbox to reach the host (mounts, ports, devices) beyond what the human approves in the page
