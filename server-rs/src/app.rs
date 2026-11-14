@@ -281,14 +281,26 @@ async fn shares_api(method: &Method, path: &str, body: &Value) -> Response {
     }
 }
 
-fn static_file(app: &App, path: &str, head: bool) -> Option<Response> {
+/// The file under dist/ that a request path names, or None. Only plain relative names are served.
+fn static_rel(path: &str) -> Option<String> {
     let mut rel = percent_decode(path.trim_start_matches('/'))?;
     if rel.split('/').any(|seg| seg == ".." || seg.starts_with('.') && !seg.is_empty()) || rel.contains('\0') || rel.contains('\\') {
+        return None;
+    }
+    // Decoding comes after the leading '/' was trimmed, so "/%2Fetc%2Fpasswd" decodes to an absolute path, and
+    // Path::join with an absolute path discards the base: it would read any file on the computer. Only plain
+    // relative names under dist/ are served.
+    if !std::path::Path::new(&rel).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
         return None;
     }
     if rel.is_empty() || rel.ends_with('/') {
         rel.push_str("index.html");
     }
+    Some(rel)
+}
+
+fn static_file(app: &App, path: &str, head: bool) -> Option<Response> {
+    let rel = static_rel(path)?;
     let bytes: Vec<u8> = match &app.disk_dist {
         Some(dir) => std::fs::read(dir.join(&rel)).ok()?,
         None => Embedded::get(&rel)?.data.into_owned(),
@@ -598,4 +610,18 @@ where
     }
     writer.abort();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::static_rel;
+
+    #[test]
+    fn static_files_stay_in_dist() {
+        assert_eq!(static_rel("/").as_deref(), Some("index.html"));
+        assert_eq!(static_rel("/assets/a.js").as_deref(), Some("assets/a.js"));
+        for bad in ["/%2Fetc%2Fhosts", "/%2Fetc/hosts", "/%2F%2Fetc%2Fhosts", "/assets/%2E%2E/%2E%2E/README.md", "/..%2F..%2FREADME.md", "/%5C..%5CREADME.md", "/.runtime/admin-token", "/%2Eruntime/admin-token"] {
+            assert_eq!(static_rel(bad), None, "{bad} must not be served");
+        }
+    }
 }
