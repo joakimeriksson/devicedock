@@ -4,6 +4,7 @@ import {
   MAX_BUFFER,
   MAX_PENDING,
   MAX_AUTONOMY_MS,
+  FLASH_START_MS,
   FLASH_IDLE_MS,
   FLASH_MAX_MS,
   FLASH_OPS,
@@ -145,6 +146,11 @@ export class Broker {
     this.endFlashSession(d);
     return false;
   }
+  /** Tells the page the session's deadlines (its banner and Cut off follow them). */
+  private flashNotice(d: Device) {
+    if (d.flashSession)
+      d.send({ type: "flash-session", deviceId: d.id, active: true, until: d.flashSession.end, idle: d.flashSession.idle });
+  }
   private endFlashSession(d: Device) {
     if (!d.flashSession) return;
     d.flashSession = undefined;
@@ -229,6 +235,11 @@ export class Broker {
       d.overflow = false;
       return { lease: d.lease.id, expires: d.lease.expires };
     }
+    // Closing a flash session only takes rights away, so it needs no lease: a tool that just exited may still hold it.
+    if (r.op === "flash.close") {
+      this.endFlashSession(d);
+      return {};
+    }
     if (!d.lease || d.lease.id !== r.lease || d.lease.client !== client)
       throw Error("Valid exclusive lease required");
     if (d.busy) throw Error("Device operation in progress");
@@ -260,14 +271,12 @@ export class Broker {
       return { session: "active" };
     }
     // Flash sessions: one approval covers the writes, control lines and line settings of one flash.
-    if (r.op === "flash.close") {
-      this.endFlashSession(d);
-      return {};
-    }
     const flashing = this.flashLive(d);
     if (r.op === "flash.open") {
       if (flashing) {
-        d.flashSession!.idle = now + FLASH_IDLE_MS;
+        // Never shortens a session still waiting for its first use.
+        d.flashSession!.idle = Math.max(d.flashSession!.idle, now + FLASH_IDLE_MS);
+        this.flashNotice(d);
         return { session: "active" };
       }
       if (this.autonomous(d)) return { session: "not needed" };
@@ -323,8 +332,8 @@ export class Broker {
       }
       if (r.op === "flash.open") {
         const t = this.now();
-        d.flashSession = { idle: t + FLASH_IDLE_MS, end: t + FLASH_MAX_MS };
-        d.send({ type: "flash-session", deviceId: d.id, active: true, until: t + FLASH_MAX_MS });
+        d.flashSession = { idle: t + FLASH_START_MS, end: t + FLASH_MAX_MS };
+        this.flashNotice(d);
         return { session: "opened" };
       }
       if (r.op === "serial.disconnect") this.revoke(d.owner, d.id);

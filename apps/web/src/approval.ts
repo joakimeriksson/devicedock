@@ -15,7 +15,22 @@ export type Description = {
 
 const PREVIEW = 600;
 
-/** Text with control characters made visible (\r, \n, \t, \xNN); line breaks are kept after \n. */
+// Characters that change how text looks without being seen: C1 controls, and format characters (bidi overrides such as
+// U+202E, zero-width spaces and joiners). An agent could use them to make the dialog misstate what it approves.
+const HIDDEN = /[\u0080-\u009f\p{Cf}]/u;
+const codepoint = (ch: string) => `\\u{${ch.codePointAt(0)!.toString(16)}}`;
+
+/** The agent's purpose as shown: hidden characters and line breaks made visible, so it reads as one plain line. */
+export function plain(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    const c = ch.codePointAt(0)!;
+    out += ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : ch === "\t" ? "\\t" : c < 0x20 || c === 0x7f || HIDDEN.test(ch) ? codepoint(ch) : ch;
+  }
+  return out;
+}
+
+/** Text with control characters made visible (\r, \n, \t, \xNN, \u{...}); line breaks are kept after \n. */
 export function visible(bytes: Uint8Array): { text: string; binary: boolean } {
   const s = new TextDecoder().decode(bytes);
   let odd = 0;
@@ -31,6 +46,9 @@ export function visible(bytes: Uint8Array): { text: string; binary: boolean } {
     } else if (c === 0xfffd) {
       odd++;
       text += "\\x??";
+    } else if (HIDDEN.test(ch)) {
+      odd++;
+      text += codepoint(ch);
     } else text += ch;
   }
   return { text, binary: odd > Math.max(2, s.length / 4) };
@@ -92,9 +110,10 @@ export function describe(op: string, args: Record<string, unknown>): Description
       return {
         title: "Allow one flash of this board",
         detail:
-          "Writes, resets (DTR/RTS) and speed changes on this board run without asking until the flash is done: the " +
-          "session ends when the tool finishes, after 2 idle minutes, or after 15 minutes at most. You can cut it off.",
-        purpose: typeof args.purpose === "string" && args.purpose ? args.purpose : undefined,
+          "Writes, resets (DTR/RTS) and speed changes on this board run without asking until the flash is done. The " +
+          "session waits up to 10 minutes for the tool to start (it may build first), ends when the tool finishes or " +
+          "after 2 idle minutes, and lasts 20 minutes at most. You can cut it off.",
+        purpose: typeof args.purpose === "string" && args.purpose ? plain(args.purpose) : undefined,
         session: true,
       };
     default:

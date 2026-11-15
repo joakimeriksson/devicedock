@@ -55,16 +55,17 @@ Always take the URL from `device list`; do not assume 2217 is the device you wan
 times in under a second; nobody can click that fast. So `esptool` here, and `idf.py ... flash` in a shell where you ran
 `get_idf`, first ask the human once ("Allow one flash of this board", showing your command), run inside that session,
 and close it when they finish. Just run the command and tell the human an approval is waiting in the page.
-- Inside the session writes, resets and baud changes need no clicks. It ends when the command finishes, after 2 idle
-  minutes, or after 15 minutes at most.
+- Inside the session writes, resets and baud changes need no clicks. It waits up to 10 minutes for the tool to start
+  (a build may come first), ends when the command finishes or after 2 idle minutes, and lasts 20 minutes at most.
 - If it says the flash was **not allowed**, tell the human; do not retry in a loop.
 - Other tools: wrap them, e.g. `devicedock-flash pio run -t upload --upload-port <rfc2217 URL>`, or open and close the
   session yourself: `device flash-open <id> --purpose "what you will run"`, then the tool, then `device flash-close <id>`.
 - Nothing is asked for simulators or in autonomous mode (section 6).
 
 **Boards that drop off USB when they reset** (ESP32-S3/C3 on their built-in USB, Raspberry Pi Pico) keep their `id`
-and `rfc2217` URL if they are back within 15 s. While one is away, operations fail with *dropped off USB*: wait a few
-seconds and retry once. A board in the ROM bootloader can have another USB id than the running app; then it shows up
+and `rfc2217` URL if they are back within 15 s, but lose autonomous mode and any flash session (the page cannot tell
+the board that comes back from another of the same kind), so writes ask again. While one is away, operations fail with
+*dropped off USB*: wait a few seconds and retry once. A board in the ROM bootloader can have another USB id than the running app; then it shows up
 as a new device that the human has to share.
 
 ## 3. Talking to a device interactively (REPL, shell)

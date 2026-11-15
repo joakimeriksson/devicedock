@@ -117,10 +117,12 @@ pub const OPS: [&str; 14] = [
     "serial.signals", "serial.write", "probe.open", "probe.close", "probe.transfer", "flash.open", "flash.close",
     "serial.read",
 ];
-/// A flash session ends after this long without a write, signal or line change...
+/// A new flash session waits this long for its first write, signal or line change (`idf.py flash` builds first)...
+pub const FLASH_START_MS: i64 = 10 * 60 * 1000;
+/// ...then ends after this long without one...
 pub const FLASH_IDLE_MS: i64 = 2 * 60 * 1000;
-/// ...and after this long at the latest, however busy it is.
-pub const FLASH_MAX_MS: i64 = 15 * 60 * 1000;
+/// ...and this long after it opened at the latest, however busy it is.
+pub const FLASH_MAX_MS: i64 = 20 * 60 * 1000;
 /// Operations a flash session covers: everything esptool does to a port, except closing it (that ends the share).
 pub const FLASH_OPS: [&str; 4] = ["serial.write", "serial.signals", "serial.configure", "serial.connect"];
 

@@ -102,19 +102,25 @@ the chip. The banner and the 10-minute idle limit bound that window.
 within a fraction of a second, so per-operation approval cannot flash a board; before flash sessions the only way was
 autonomous mode, which lets every agent write for 15 minutes or more.
 - `flash.open` needs one human approval. The agent may give a `purpose` (at most 200 characters, e.g. the esptool
-  command line); the page shows it as the agent's own words. Like a probe session it belongs to the device, not to a
-  lease: `device flash-open` approves it and esptool's RFC 2217 connection uses it.
+  command line); the page shows it as the agent's own words, with control, bidi and zero-width characters made visible.
+  Like a probe session it belongs to the device, not to a lease: `device flash-open` approves it and esptool's
+  RFC 2217 connection uses it.
 - Inside the session `serial.write`, `serial.signals`, `serial.configure` and `serial.connect` from agents need no
   approval. `serial.disconnect` still does (it ends the share).
-- It ends on `flash.close`, after 2 minutes without such an operation, 15 minutes after it opened however busy it is,
-  when the owner clicks **Cut off**, or when the device is revoked. `devices.list` reports `flashSession`.
+- It waits up to 10 minutes for its first such operation (`idf.py flash` builds first), then ends after 2 minutes
+  without one; 20 minutes after it opened at the latest; on `flash.close`, which needs no lease (it only removes
+  rights, and the tool that flashed may still hold the lease); when the owner clicks **Cut off**; or when the device is
+  revoked. `devices.list` reports `flashSession`; the page is told each deadline (`flash-session {until, idle}`).
 - In the sandbox, `esptool` and `devicedock-flash <command>` (which `idf.py ... flash` goes through) open a session
-  before the tool runs and close it when it exits, so a flash costs the human one click.
+  before the tool runs and close it when it exits (also on Ctrl-C and SIGTERM; a session someone else opened is left
+  alone), so a flash costs the human one click.
 
 **Boards that re-enumerate.** ESP32-S3/C3 boards on their built-in USB and the RP2040 drop off USB when they reset. The
 page keeps such a shared board shared for 15 s: a port that comes back with the USB id of exactly one lost device gets
 the same device id, generation and RFC 2217 port, and is reopened at the same baud rate. Operations in the gap fail
-(*dropped off USB*). If it does not come back, or two lost boards share the USB id (WebSerial gives no serial number to
+(*dropped off USB*). A USB id does not identify a board, so what comes back may be another board of the same kind: the
+share carries over (its writes still need approval), but autonomous mode and a flash session end as soon as the board
+drops. If it does not come back, or two lost boards share the USB id (WebSerial gives no serial number to
 tell them apart), the share is revoked as before.
 
 ## 5. Adding another browser simulator (checklist)

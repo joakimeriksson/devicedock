@@ -85,7 +85,9 @@ export const request = z.discriminatedUnion("op", [
   }),
   // Flash sessions (serial devices): `flash.open` is approved once, with an optional purpose the agent states (shown to
   // the human as the agent's words, never trusted). Inside the session writes, control lines and line settings need no
-  // further approval, until it is idle for FLASH_IDLE_MS, reaches FLASH_MAX_MS, is closed, or the owner cuts it off.
+  // further approval. It waits FLASH_START_MS for its first use (a build may come first), then ends when idle for
+  // FLASH_IDLE_MS, FLASH_MAX_MS after it opened, on flash.close (no lease needed: it only removes rights), or when the
+  // owner cuts it off.
   z.object({
     ...common,
     op: z.literal("flash.open"),
@@ -103,10 +105,12 @@ export const request = z.discriminatedUnion("op", [
   }),
 ]);
 export type Request = z.infer<typeof request>;
-/** A flash session ends after this long without a write, signal or line change... */
+/** A new flash session waits this long for its first write, signal or line change (`idf.py flash` builds first)... */
+export const FLASH_START_MS = 10 * 60 * 1000;
+/** ...then ends after this long without one... */
 export const FLASH_IDLE_MS = 2 * 60 * 1000;
-/** ...and after this long at the latest, however busy it is. */
-export const FLASH_MAX_MS = 15 * 60 * 1000;
+/** ...and this long after it opened at the latest, however busy it is. */
+export const FLASH_MAX_MS = 20 * 60 * 1000;
 /** Operations a flash session covers: everything esptool does to a port, except closing it (that ends the share). */
 export const FLASH_OPS: readonly string[] = ["serial.write", "serial.signals", "serial.configure", "serial.connect"];
 /**

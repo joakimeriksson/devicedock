@@ -242,6 +242,12 @@ impl Broker {
             None => false,
         }
     }
+    /// Tells the page the session's deadlines (its banner and Cut off follow them).
+    fn flash_notice(d: &Device) {
+        if let Some((idle, end)) = d.flash {
+            (d.send)(json!({"type": "flash-session", "deviceId": d.d.id, "active": true, "until": end, "idle": idle}));
+        }
+    }
     fn end_flash_session(d: &mut Device) {
         if d.flash.take().is_some() {
             (d.send)(json!({"type": "flash-session", "deviceId": d.d.id, "active": false}));
@@ -339,6 +345,11 @@ impl Broker {
                 d.overflow = false;
                 return Ok(out);
             }
+            // Closing a flash session only takes rights away, so it needs no lease: a tool that just exited may still hold it.
+            if r.op == "flash.close" {
+                Self::end_flash_session(d);
+                return Ok(json!({}));
+            }
             if !d.lease.as_ref().is_some_and(|l| Some(&l.id) == r.lease.as_ref() && l.client == client) {
                 return Err("Valid exclusive lease required".into());
             }
@@ -380,14 +391,12 @@ impl Broker {
                 return Ok(json!({"session": "active"}));
             }
             // Flash sessions: one approval covers the writes, control lines and line settings of one flash.
-            if r.op == "flash.close" {
-                Self::end_flash_session(d);
-                return Ok(json!({}));
-            }
             let flashing = self.flash_live(d);
             if r.op == "flash.open" {
                 if flashing {
-                    d.flash = d.flash.map(|(_, end)| (now + FLASH_IDLE_MS, end));
+                    // Never shortens a session still waiting for its first use.
+                    d.flash = d.flash.map(|(idle, end)| (idle.max(now + FLASH_IDLE_MS), end));
+                    Self::flash_notice(d);
                     return Ok(json!({"session": "active"}));
                 }
                 if self.autonomous(d) {
@@ -466,9 +475,8 @@ impl Broker {
             "flash.open" => {
                 let now = self.now();
                 if let Some(d) = s.devices.get_mut(&device_id).filter(|d| d.token == token) {
-                    d.flash = Some((now + FLASH_IDLE_MS, now + FLASH_MAX_MS));
-                    let msg = json!({"type": "flash-session", "deviceId": d.d.id, "active": true, "until": now + FLASH_MAX_MS});
-                    (d.send)(msg);
+                    d.flash = Some((now + FLASH_START_MS, now + FLASH_MAX_MS));
+                    Self::flash_notice(d);
                 }
                 json!({"session": "opened"})
             }
@@ -843,9 +851,27 @@ mod tests {
         asks("serial.write", json!({"data": "AA=="})).await;
         assert_eq!(b.run("esptool", Source::Agent, &list()).await.unwrap()[0]["flashSession"], false);
 
-        // A busy session still ends after 15 minutes.
+        // A new session waits for its first use (a build may come first), then idles out as usual.
+        approve_open(open("idf.py flash")).await;
+        assert_eq!(last()["idle"].as_i64().unwrap() - clock.load(Ordering::SeqCst), FLASH_START_MS);
+        clock.fetch_add(FLASH_IDLE_MS + 1, Ordering::SeqCst);
+        straight("serial.write", json!({"data": "AA=="})).await;
+        clock.fetch_add(FLASH_IDLE_MS + 1, Ordering::SeqCst);
+        asks("serial.write", json!({"data": "AA=="})).await;
+        approve_open(open("never used")).await;
+        clock.fetch_add(FLASH_START_MS, Ordering::SeqCst);
+        asks("serial.write", json!({"data": "AA=="})).await;
+
+        // Closing needs no lease: the tool that flashed may still hold it.
+        approve_open(open("closed by another client")).await;
+        let close = req(&d.id, "flash.close", None, json!({}), clock.load(Ordering::SeqCst) + 5000);
+        assert_eq!(b.run("wrapper", Source::Agent, &close).await.unwrap(), json!({}));
+        assert_eq!(last()["active"], false);
+        asks("serial.write", json!({"data": "AA=="})).await;
+
+        // A busy session still ends 20 minutes after it opened.
         approve_open(open("long flash")).await;
-        for _ in 0..14 {
+        for _ in 0..19 {
             clock.fetch_add(60_000, Ordering::SeqCst);
             straight("serial.write", json!({"data": "AA=="})).await;
         }

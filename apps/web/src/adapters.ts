@@ -199,6 +199,10 @@ export class WebSerialAdapter implements DeviceAdapter {
       throw Error("WebSerial requires Chrome or Edge on localhost");
     return this.register(await navigator.serial.requestPort(filters ? { filters } : undefined));
   }
+  /** Whether the device's port is gone (unplugged, and not back). */
+  isLost(id: string) {
+    return !!this.devices.get(id)?.lost;
+  }
   /** Drops a device whose port is gone, so its row can be removed. */
   forget(id: string) {
     if (this.devices.get(id)?.lost) this.devices.delete(id);
@@ -264,6 +268,7 @@ export class WebSerialAdapter implements DeviceAdapter {
   }
   subscribe(id: string, h: Handler) {
     this.get(id).handlers.add(h);
-    return () => this.get(id).handlers.delete(h);
+    // Safe after forget(): the device may be gone by the time its row unsubscribes.
+    return () => void this.devices.get(id)?.handlers.delete(h);
   }
 }

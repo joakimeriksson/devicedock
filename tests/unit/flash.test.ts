@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Broker } from "../../apps/server/broker.ts";
-import { FLASH_IDLE_MS, FLASH_MAX_MS, request } from "../../packages/protocol/index.ts";
+import { FLASH_IDLE_MS, FLASH_MAX_MS, FLASH_START_MS, request } from "../../packages/protocol/index.ts";
 
 // A real serial board, a clock the test moves, and a page that approves (or denies) and answers every operation.
 // The page counts the approvals it was asked for: the point of a flash session is that there is one per flash.
@@ -62,20 +62,31 @@ test("one approval covers a whole flash, and shows the purpose the agent gave", 
     await assert.rejects(f.b.run("esptool", "agent", f.req("serial.disconnect", l)), /denied/);
     // A second flash.open keeps it going without asking.
     assert.deepEqual(await f.b.run("esptool", "agent", f.req("flash.open", l)), { session: "active" });
-    await f.b.run("esptool", "agent", f.req("flash.close", l));
+    // Closing needs no lease: another client closes it while esptool still holds the device.
+    await f.b.run("wrapper", "agent", f.req("flash.close"));
     await assert.rejects(f.b.run("esptool", "agent", f.req("serial.write", l, { data: "AA==" })), /denied/);
-    assert.deepEqual(f.page.sessions.map((s) => s.active), [true, false]);
+    assert.deepEqual(f.page.sessions.map((s) => s.active), [true, true, false]);
+    assert.equal(f.page.sessions[0].until - f.page.sessions[0].idle, FLASH_MAX_MS - FLASH_START_MS);
   } finally {
     f.stop();
   }
 });
 
-test("a session ends after two idle minutes, after fifteen busy ones, and when the owner cuts it off", async () => {
+test("a session waits for its first use, then ends after two idle minutes, twenty busy ones, or a cut-off", async () => {
   const f = fixture();
   try {
     const l = await f.lease();
+    // Unused: it waits for the build (FLASH_START_MS), not just FLASH_IDLE_MS.
     await f.b.run("esptool", "agent", f.req("flash.open", l));
     f.advance(FLASH_IDLE_MS + 1);
+    await f.b.run("esptool", "agent", f.req("serial.write", l, { data: "AA==" }));
+    assert.equal(f.page.approvals.length, 1);
+    f.page.allow = false;
+    f.advance(FLASH_IDLE_MS + 1);
+    await assert.rejects(f.b.run("esptool", "agent", f.req("serial.write", l, { data: "AA==" })), /denied/);
+    f.page.allow = true;
+    await f.b.run("esptool", "agent", f.req("flash.open", l));
+    f.advance(FLASH_START_MS);
     f.page.allow = false;
     await assert.rejects(f.b.run("esptool", "agent", f.req("serial.write", l, { data: "AA==" })), /denied/);
     assert.equal((await f.list()).flashSession, false);

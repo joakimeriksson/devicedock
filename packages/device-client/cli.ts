@@ -41,7 +41,11 @@ try {
   } else {
     const d = devices.find((d) => d.id === id);
     if (!d) throw Error("Device not exposed; run device list");
-    await client.using(d, async (lease) => {
+    if (cmd === "flash-close") {
+      // No lease: the tool that just flashed may still hold the device, and closing only takes rights away.
+      await client.call("flash.close", d);
+      console.log("Flash session closed.");
+    } else await client.using(d, async (lease) => {
       if (cmd === "probe-open") {
         // One human approval opens a debug session; OpenOCD runs inside it need no further clicks. It lapses after
         // 10 minutes without probe traffic, or when the human cuts it off in the page.
@@ -63,9 +67,6 @@ try {
             ? "No flash session needed: this device is a simulator or in autonomous mode."
             : `Flash session ${r.session}. Flash now (esptool or idf.py with the device's rfc2217 URL), then run \`device flash-close ${d.id}\`.`,
         );
-      } else if (cmd === "flash-close") {
-        await client.call("flash.close", d, {}, lease);
-        console.log("Flash session closed.");
       } else if (cmd === "send") {
         const data = flags.includes("--hex")
           ? Buffer.from(hexBytes(value("--hex")))

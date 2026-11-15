@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { migrateRememberKey, usbKey, usbName } from "../../apps/web/src/usb.ts";
-import { describe, visible } from "../../apps/web/src/approval.ts";
+import { describe, plain, visible } from "../../apps/web/src/approval.ts";
 
 const b64 = (s: string | number[]) => Buffer.from(typeof s === "string" ? s : Uint8Array.from(s)).toString("base64");
 
@@ -31,6 +31,14 @@ test("writes are shown as readable text with control characters made visible", (
   assert.equal(describe("serial.write", { data: b64("A") }).title, "Send 1 byte");
   assert.equal(visible(new TextEncoder().encode("a\nb\x03")).text, "a\\n\nb\\x03");
   assert.equal(visible(new TextEncoder().encode("hej då ✓")).text, "hej då ✓");
+});
+
+test("hidden characters cannot make the dialog misstate a write or a purpose", () => {
+  // U+202E (right-to-left override) would show "esptool chip-id" while the bytes say otherwise; U+200B is invisible.
+  assert.equal(plain("esptool \u202edi-pihc\u200b\nrm -rf /"), "esptool \\u{202e}di-pihc\\u{200b}\\nrm -rf /");
+  assert.equal(visible(new TextEncoder().encode("ok\u202e\u0085")).text, "ok\\u{202e}\\u{85}");
+  assert.equal(describe("flash.open", { purpose: "a\u2066b" }).purpose, "a\\u{2066}b");
+  assert.equal(plain("hej då ✓ 0x10000"), "hej då ✓ 0x10000");
 });
 
 test("binary writes say so, show hex, and long ones are cut", () => {

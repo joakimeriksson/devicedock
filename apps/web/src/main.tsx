@@ -1,6 +1,6 @@
 import {
   request as protocolRequest,
-  options as serialOptions, isPhysical, isVirtual, FLASH_IDLE_MS, FLASH_MAX_MS } from "../../../packages/protocol/index.ts";
+  options as serialOptions, isPhysical, isVirtual, FLASH_IDLE_MS, FLASH_MAX_MS, FLASH_OPS } from "../../../packages/protocol/index.ts";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -41,14 +41,13 @@ type Row = Descriptor & {
   unplugged?: boolean;
   /** A shared board that went away stays shared, under the same id, if it comes back before this time. */
   waitingUntil?: number;
-  /** An approved flash session: its hard end, and the last operation in it (it also ends after FLASH_IDLE_MS). */
+  /** An approved flash session: its hard end and its idle deadline (the broker's, moved on by each write in it). */
   flashUntil?: number;
-  flashSeen?: number;
+  flashIdle?: number;
 };
 /** How long a shared board may be gone and still come back shared: an ESP32-S3 or RP2040 reset takes a second or two. */
 const RECONNECT_GRACE_MS = 15000;
-const flashing = (r: Row, now: number) =>
-  !!r.flashUntil && r.flashUntil > now && now - (r.flashSeen ?? 0) < FLASH_IDLE_MS;
+const flashing = (r: Row, now: number) => !!r.flashUntil && r.flashUntil > now && (r.flashIdle ?? 0) > now;
 type Rpc = {
   v: 1;
   id: string;
@@ -144,6 +143,8 @@ function App() {
   }
   const monitorEnd = useRef<HTMLDivElement>(null);
   const reconnectTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  // One data/disconnect handler per device, however often it is added (a re-added row must not double the data).
+  const unsubscribers = useRef(new Map<string, () => void>());
   const socket = useRef<WebSocket | null>(null),
     rowsRef = useRef<Row[]>([]),
     pending = useRef(
@@ -353,7 +354,20 @@ function App() {
       ws.onclose = () => {
         setConnected(false);
         setApprovals([]);
-        update((old) => old.map((r) => ({ ...r, exposed: false })));
+        // The backend dropped every share and session with the connection.
+        for (const t of reconnectTimers.current.values()) clearTimeout(t);
+        reconnectTimers.current.clear();
+        update((old) =>
+          old.map((r) => ({
+            ...r,
+            exposed: false,
+            waitingUntil: undefined,
+            flashUntil: undefined,
+            flashIdle: undefined,
+            probeSession: false,
+            autonomousUntil: undefined,
+          })),
+        );
         for (const p of pending.current.values()) {
           clearTimeout(p.timer);
           p.reject(Error("Bridge disconnected"));
@@ -384,7 +398,7 @@ function App() {
           update((old) =>
             old.map((r) =>
               r.id === m.deviceId
-                ? { ...r, flashUntil: m.active ? m.until : undefined, flashSeen: m.active ? Date.now() : undefined }
+                ? { ...r, flashUntil: m.active ? m.until : undefined, flashIdle: m.active ? m.idle : undefined }
                 : r,
             ),
           );
@@ -404,8 +418,9 @@ function App() {
           throw Error("Device revoked, stale, or deadline expired");
         if (row.waitingUntil)
           throw Error("The board dropped off USB (unplugged, or it reset) and has not come back yet; try again in a few seconds");
-        if (row.flashUntil)
-          update((old) => old.map((d) => (d.id === row.id ? { ...d, flashSeen: Date.now() } : d)));
+        // Mirrors the broker: each covered operation in a flash session moves its idle deadline on.
+        if (row.flashUntil && FLASH_OPS.includes(r.op))
+          update((old) => old.map((d) => (d.id === row.id ? { ...d, flashIdle: Date.now() + FLASH_IDLE_MS } : d)));
         if (r.op === "probe.transfer") {
           // DAP packets are not logged to the serial monitor: there are hundreds per second while flashing.
           if (!(row.adapter instanceof ProbeAdapter)) throw Error("Not a debug probe");
@@ -471,7 +486,10 @@ function App() {
     try {
       for (const d of await serial.listGranted()) await add(serial, d);
       for (const key of Object.keys(mem)) {
-        const same = rowsRef.current.filter((r) => r.kind === "serial" && rememberKey(r) === key && !r.unplugged);
+        // A board waiting to come back still counts: its identical twin must not be shared in its place.
+        const same = rowsRef.current.filter(
+          (r) => r.kind === "serial" && rememberKey(r) === key && (!r.unplugged || !!r.waitingUntil),
+        );
         if (!same.length || same.some((r) => r.exposed)) continue;
         // Two boards with the same USB id look identical to the browser (WebSerial gives no serial number). Sharing
         // one of them at random could send the agent's writes to the wrong board, so neither is shared.
@@ -505,7 +523,8 @@ function App() {
       baudRate: baud,
       autoApprove: isVirtual(d.kind),
     };
-    adapter.subscribe(d.id, (event) => {
+    unsubscribers.current.get(d.id)?.();
+    const unsubscribe = adapter.subscribe(d.id, (event) => {
       const current = rowsRef.current.find((r) => r.id === d.id);
       if (event.type === "reconnect") {
         void reattach(d.id);
@@ -530,13 +549,33 @@ function App() {
         // A shared USB serial board stays shared for a moment: if it comes back (a reset that re-enumerates, a
         // wobbly cable) it keeps its id, generation and RFC 2217 port, and the agent's tools can carry on.
         if (current?.exposed && adapter instanceof WebSerialAdapter) {
+          // What comes back is only known by its USB id, so it may be a different board of the same kind: it gets the
+          // share, but not the extra trust. Autonomous mode and a flash session end now; its writes will ask again.
+          const trusted = (current.autonomousUntil ?? 0) > Date.now() || !!current.flashUntil;
+          try {
+            if (current.flashUntil) send({ type: "flash-end", deviceId: d.id });
+            if ((current.autonomousUntil ?? 0) > Date.now()) send({ type: "autonomy", deviceId: d.id, until: null });
+          } catch {}
           update((old) =>
             old.map((r) =>
-              r.id === d.id ? { ...r, open: false, unplugged: true, waitingUntil: Date.now() + RECONNECT_GRACE_MS } : r,
+              r.id === d.id
+                ? {
+                    ...r,
+                    open: false,
+                    unplugged: true,
+                    waitingUntil: Date.now() + RECONNECT_GRACE_MS,
+                    autonomousUntil: undefined,
+                    flashUntil: undefined,
+                    flashIdle: undefined,
+                  }
+                : r,
             ),
           );
           log(
-            new TextEncoder().encode(`dropped off USB; still shared if it is back within ${RECONNECT_GRACE_MS / 1000} s`),
+            new TextEncoder().encode(
+              `dropped off USB; still shared if it is back within ${RECONNECT_GRACE_MS / 1000} s` +
+                (trusted ? " (autonomous mode / the flash session ended: its writes ask again)" : ""),
+            ),
             "USB",
             d,
           );
@@ -546,6 +585,7 @@ function App() {
         giveUp(d.id, event.error);
       }
     });
+    unsubscribers.current.set(d.id, unsubscribe);
     update((old) => [...old, row]);
   }
   /** The board did not come back in time (or was not shared): stop sharing it, as on any disconnect. */
@@ -565,9 +605,12 @@ function App() {
               ...r,
               open: false,
               exposed: false,
-              unplugged: r.adapter instanceof WebSerialAdapter ? true : r.unplugged,
+              // Only a port that is really gone: a read error on a present port leaves it shareable again.
+              unplugged: r.adapter instanceof WebSerialAdapter && r.adapter.isLost(id),
               waitingUntil: undefined,
               flashUntil: undefined,
+              flashIdle: undefined,
+              autonomousUntil: undefined,
               probeSession: false,
             }
           : r,
@@ -930,6 +973,8 @@ function App() {
                         <button
                           title="Plug it back in and it reappears here"
                           onClick={() => {
+                            unsubscribers.current.get(row.id)?.();
+                            unsubscribers.current.delete(row.id);
                             serial.forget(row.id);
                             update((old) => old.filter((r) => r.id !== row.id));
                           }}

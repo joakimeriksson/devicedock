@@ -14,8 +14,11 @@ Set DEVICEDOCK_SKIP_CHECK=1 to run esptool directly.
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
+import time
 
 
 def port_from(argv):
@@ -55,20 +58,61 @@ def device_for(url):
     return dev
 
 
+def utf16_len(s):
+    return len(s.encode("utf-16-le")) // 2
+
+
 def open_session(dev, words):
+    """Asks the human for a flash session. True if this call opened it (and must close it), False if one was open."""
     purpose = " ".join(words)
-    if len(purpose) > 200:
-        purpose = purpose[:199] + "…"
+    if utf16_len(purpose) > 200:  # the protocol counts UTF-16 units
+        while utf16_len(purpose) > 199:
+            purpose = purpose[:-1]
+        purpose += "…"
     print(f"DeviceDock: asking the human to allow this flash of '{dev.get('name')}' in the page...", file=sys.stderr)
-    r = subprocess.run(["device", "flash-open", dev["id"], "--purpose", purpose], capture_output=True, text=True)
-    if r.returncode != 0:
+    for attempt in range(4):
+        r = subprocess.run(["device", "flash-open", dev["id"], "--purpose", purpose], capture_output=True, text=True)
         why = (r.stderr or r.stdout).strip().splitlines()
+        # The previous tool's connection can hold the board for a few seconds after it exits.
+        if r.returncode != 0 and why and "already leased" in why[-1] and attempt < 3:
+            time.sleep(3)
+            continue
+        break
+    if r.returncode != 0:
+        reason = why[-1] if why else "no answer"
+        if "already leased" in reason:
+            stop(
+                f"DeviceDock: '{dev.get('name')}' is in use by another client (a running `device monitor`, esptool or\n"
+                "pyserial). Stop it, then run the same command again."
+            )
         stop(
-            f"DeviceDock: the flash was not allowed ({why[-1] if why else 'no answer'}).\n"
+            f"DeviceDock: the flash was not allowed ({reason}).\n"
             f"{words[0]} resets the board with DTR/RTS, and on real hardware that needs the human's OK. Tell the human,\n"
             "and ask them to click Allow when the request appears (or 'Autonomous 15 min' on the device); then run the\n"
             "same command again once. Do not retry in a loop. (DEVICEDOCK_SKIP_CHECK=1 skips this step.)"
         )
+    return "opened" in r.stdout
+
+
+def close_session(dev):
+    for attempt in range(3):
+        if subprocess.run(["device", "flash-close", dev["id"]], capture_output=True).returncode == 0:
+            return
+        time.sleep(1)
+    print(
+        "DeviceDock: could not close the flash session; it ends by itself after 2 idle minutes, or the human can\n"
+        "click Cut off in the page.",
+        file=sys.stderr,
+    )
+
+
+class Terminated(Exception):
+    pass
+
+
+def stop_on_sigterm(*_):
+    # An agent's tool timeout sends SIGTERM: leave through `finally`, so the session is closed.
+    raise Terminated()
 
 
 if os.path.basename(sys.argv[0]) == "devicedock-flash":
@@ -85,18 +129,37 @@ if words is cmd and not (url or "").startswith("rfc2217://") and os.environ.get(
         "devicedock-flash: give the board's rfc2217 URL from `device list` (-p/--port, --upload-port, or ESPPORT),\n"
         "so it knows which board to ask the human about."
     )
+if words is cmd and shutil.which(cmd[0]) is None:
+    # Before asking the human anything.
+    stop(f"{cmd[0]}: command not found" + (" (run get_idf first)" if cmd[0] == "idf.py" else ""))
 dev = device_for(url)
 if dev is None:
     os.execvp(cmd[0], cmd)
-open_session(dev, words)
+signal.signal(signal.SIGTERM, stop_on_sigterm)
+opened = asking = False
+child = None
+code = 1
 try:
-    code = subprocess.call(cmd)
-except KeyboardInterrupt:
-    code = 130
-except FileNotFoundError:
-    print(f"{cmd[0]}: command not found" + (" (run get_idf first)" if cmd[0] == "idf.py" else ""), file=sys.stderr)
-    code = 127
+    asking = True
+    opened = open_session(dev, words)
+    asking = False
+    child = subprocess.Popen(cmd)
+    code = child.wait()
+    if code < 0:  # killed by a signal: report it the way a shell does
+        code = 128 - code
+except (KeyboardInterrupt, Terminated) as e:
+    code = 143 if isinstance(e, Terminated) else 130
+    # Interrupted while the human was still being asked: close too, in case they click Allow late.
+    if asking:
+        close_session(dev)
 finally:
-    # The session covered this one command.
-    subprocess.run(["device", "flash-close", dev["id"]], capture_output=True)
+    if child is not None and child.poll() is None:
+        child.terminate()
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            child.kill()
+    # The session covered this one command; one that was already open belongs to whoever opened it.
+    if opened:
+        close_session(dev)
 sys.exit(code)
