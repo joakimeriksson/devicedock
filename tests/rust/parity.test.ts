@@ -134,17 +134,19 @@ test("Rust backend: auth, CSRF, admin links, static files, and the full page ⇄
       const replies: any[] = [];
       br.on("message", (d) => replies.push(JSON.parse(String(d))));
       const client = randomUUID();
+      const asked: string[] = []; // ops the page was asked to approve
       const ask = async (op: string, args: unknown = {}, extra: object = {}) => {
         const id = randomUUID();
         br.send(JSON.stringify({ client, request: { v: 1, id, op, args, deadline: Date.now() + 10000, deviceId: dev.id, generation: 1, ...extra } }));
         for (let i = 0; i < 300; i++) {
           const k = replies.findIndex((r) => r.id === id);
           if (k >= 0) return replies.splice(k, 1)[0];
-          if (op === "serial.write") {
+          if (op === "serial.write" || op === "flash.open") {
             const a = inbox.findIndex((m) => m.type === "approval" && m.request.id === id);
             if (a >= 0) {
               const m = inbox.splice(a, 1)[0];
               assert.deepEqual(m.request.args, args);
+              asked.push(op);
               page.send(JSON.stringify({ type: "approve", id, allow: true }));
             }
             const o = inbox.findIndex((m) => m.type === "operation" && m.request.id === id);
@@ -156,7 +158,7 @@ test("Rust backend: auth, CSRF, admin links, static files, and the full page ⇄
       };
       const list = await ask("devices.list");
       assert.equal(list.ok, true);
-      assert.deepEqual(list.result, [{ id: dev.id, name: "LaunchPad", kind: "serial", simulated: false, generation: 1, baudRate: 115200, autonomous: false }]);
+      assert.deepEqual(list.result, [{ id: dev.id, name: "LaunchPad", kind: "serial", simulated: false, generation: 1, baudRate: 115200, autonomous: false, flashSession: false }]);
       const acq = await ask("serial.acquire");
       assert.equal(acq.ok, true);
       const lease = acq.result.lease;
@@ -169,6 +171,19 @@ test("Rust backend: auth, CSRF, admin links, static files, and the full page ⇄
       const bad = await ask("serial.read", {}, { lease: randomUUID() });
       assert.equal(bad.ok, false);
       assert.match(bad.error, /lease required/);
+      // A flash session: one approval (showing the agent's purpose), then writes go straight to the page, until the
+      // page cuts it off.
+      asked.length = 0;
+      const fo = await ask("flash.open", { purpose: "esptool write-flash 0x0 app.bin" }, { lease });
+      assert.deepEqual(fo.result, { session: "opened" });
+      assert.equal((await next((m) => m.type === "flash-session")).active, true);
+      assert.equal((await ask("serial.write", { data: "AA==" }, { lease })).ok, true);
+      assert.deepEqual(asked, ["flash.open"]);
+      assert.equal((await ask("devices.list")).result[0].flashSession, true);
+      page.send(JSON.stringify({ type: "flash-end", deviceId: dev.id }));
+      assert.equal((await next((m) => m.type === "flash-session")).active, false);
+      assert.equal((await ask("serial.write", { data: "AA==" }, { lease })).ok, true);
+      assert.deepEqual(asked, ["flash.open", "serial.write"]);
       // The page's own RPC path.
       const rid = randomUUID();
       page.send(JSON.stringify({ type: "rpc", request: { v: 1, id: rid, op: "devices.list", args: {}, deadline: Date.now() + 5000 } }));

@@ -41,7 +41,11 @@ try {
   } else {
     const d = devices.find((d) => d.id === id);
     if (!d) throw Error("Device not exposed; run device list");
-    await client.using(d, async (lease) => {
+    if (cmd === "flash-close") {
+      // No lease: the tool that just flashed may still hold the device, and closing only takes rights away.
+      await client.call("flash.close", d);
+      console.log("Flash session closed.");
+    } else await client.using(d, async (lease) => {
       if (cmd === "probe-open") {
         // One human approval opens a debug session; OpenOCD runs inside it need no further clicks. It lapses after
         // 10 minutes without probe traffic, or when the human cuts it off in the page.
@@ -51,6 +55,18 @@ try {
       } else if (cmd === "probe-close") {
         await client.call("probe.close", d, {}, lease);
         console.log("Probe session closed.");
+      } else if (cmd === "flash-open") {
+        // One human approval covers one flash of a real board: writes, DTR/RTS resets and baud changes need no further
+        // clicks until it is idle for 2 minutes, 15 minutes have passed, `flash-close`, or the human cuts it off.
+        const purpose = flags.includes("--purpose") ? value("--purpose") : undefined;
+        if (purpose !== undefined && (!purpose || purpose.length > 200)) throw Error("--purpose needs a text of at most 200 characters");
+        console.error("Waiting for approval in the DeviceDock page (up to 25 s)...");
+        const r = (await client.call("flash.open", d, purpose ? { purpose } : {}, lease)) as { session: string };
+        console.log(
+          r.session === "not needed"
+            ? "No flash session needed: this device is a simulator or in autonomous mode."
+            : `Flash session ${r.session}. Flash now (esptool or idf.py with the device's rfc2217 URL), then run \`device flash-close ${d.id}\`.`,
+        );
       } else if (cmd === "send") {
         const data = flags.includes("--hex")
           ? Buffer.from(hexBytes(value("--hex")))
@@ -103,7 +119,7 @@ try {
         await readFor(client, d, lease, flags.includes("--seconds") ? seconds("--seconds") * 1000 : Infinity);
       } else
         throw Error(
-          "Commands: list, connect, configure, send (--text|--hex [--read SECONDS]), signals, monitor [--seconds N], disconnect, probe-open, probe-close",
+          "Commands: list, connect, configure, send (--text|--hex [--read SECONDS]), signals, monitor [--seconds N], disconnect, flash-open [--purpose TEXT], flash-close, probe-open, probe-close",
         );
     });
   }

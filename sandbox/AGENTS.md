@@ -28,7 +28,9 @@ Prints JSON, one entry per device, **real hardware first**:
 | `kind` | `serial` = real hardware, `probe` = real debug probe (section 7), `sim` = simulator, `mock` = built-in loopback |
 | `simulated` | `true` for `sim`/`mock`. **Say so in every report**: "on the simulator" is not "on the board". |
 | `engine`, `board` | what the simulator is (e.g. `esp32sim`, `ttgo-tdisplay`) |
+| `name` | for USB boards, the USB chip or board and its USB id, e.g. `CP210x USB-UART (10c4:ea60)` or `ESP32 USB-Serial/JTAG (303a:1001)` (the chip family is a hint; `esptool chip-id` tells for sure) |
 | `autonomous` | the human enabled unattended writes for this real device (see section 6) |
+| `flashSession` | real serial boards: an approved flash session is running (section 2) |
 | `rfc2217` | the URL standard serial tools use for **this** device (section 2) |
 | `openocd` | debug probes only: the OpenOCD commands for **this** probe's endpoint (section 7) |
 
@@ -49,11 +51,22 @@ python -c "import serial; s=serial.serial_for_url('rfc2217://127.0.0.1:2217', 11
 ```
 Always take the URL from `device list`; do not assume 2217 is the device you want once a simulator is also shared.
 
-**esptool and `idf.py flash` on a real board need `"autonomous": true`** in `device list`. They reset the chip by
-toggling DTR/RTS many times in under a second, and without autonomous mode each toggle waits for a human click, so
-the flash fails after ~30 s with a misleading *connection failed (reader thread died)*. Check first; if it is `false`,
-ask the human to click **Autonomous 15 min** on that device, then run the command. `esptool` here refuses to start
-with an explanation in that case; `idf.py` uses its own esptool and does not, so check yourself before `idf.py flash`.
+**Flashing a real board takes one human approval, a flash session.** esptool resets the chip by toggling DTR/RTS many
+times in under a second; nobody can click that fast. So `esptool` here, and `idf.py ... flash` in a shell where you ran
+`get_idf`, first ask the human once ("Allow one flash of this board", showing your command), run inside that session,
+and close it when they finish. Just run the command and tell the human an approval is waiting in the page.
+- Inside the session writes, resets and baud changes need no clicks. It waits up to 10 minutes for the tool to start
+  (a build may come first), ends when the command finishes or after 2 idle minutes, and lasts 20 minutes at most.
+- If it says the flash was **not allowed**, tell the human; do not retry in a loop.
+- Other tools: wrap them, e.g. `devicedock-flash pio run -t upload --upload-port <rfc2217 URL>`, or open and close the
+  session yourself: `device flash-open <id> --purpose "what you will run"`, then the tool, then `device flash-close <id>`.
+- Nothing is asked for simulators or in autonomous mode (section 6).
+
+**Boards that drop off USB when they reset** (ESP32-S3/C3 on their built-in USB, Raspberry Pi Pico) keep their `id`
+and `rfc2217` URL if they are back within 15 s, but lose autonomous mode and any flash session (the page cannot tell
+the board that comes back from another of the same kind), so writes ask again. While one is away, operations fail with
+*dropped off USB*: wait a few seconds and retry once. A board in the ROM bootloader can have another USB id than the running app; then it shows up
+as a new device that the human has to share.
 
 ## 3. Talking to a device interactively (REPL, shell)
 ```sh
@@ -83,8 +96,8 @@ MicroPython code, but results are not hardware results.
 - **Input is exact for ASCII text**, not for arbitrary binary.
 
 ## 6. Real hardware: approvals and autonomous mode
-Unless the human enabled **autonomous mode** (15 or 60 minutes) for a real device, every write, reset and
-configuration change waits for their click in the browser and can time out. If operations time out or report
+Unless the human enabled **autonomous mode** (15 or 60 minutes) for a real device, or a flash session is running
+(section 2), every write, reset and configuration change waits for their click in the browser and can time out. If operations time out or report
 "Human denied operation", tell the human instead of retrying in a loop, and never retry a write that timed out
 without first checking the device state. Autonomous mode ends by itself; then you are back to per-operation approval.
 Opening the port can reset the board (normal for ESP32); a boot log afterwards is expected.

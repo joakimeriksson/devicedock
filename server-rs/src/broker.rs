@@ -1,4 +1,4 @@
-//! Port of apps/server/broker.ts: exclusive leases, per-operation approval, autonomous mode, probe sessions.
+//! Port of apps/server/broker.ts: exclusive leases, per-operation approval, autonomous mode, probe and flash sessions.
 //! All state sits behind one mutex; operations that need the page wait on a oneshot channel outside it.
 use crate::protocol::*;
 use indexmap::IndexMap;
@@ -39,6 +39,8 @@ struct Device {
     overflow: bool,
     busy: bool,
     probe_until: Option<i64>,
+    /// Serial devices: an approved flash session, as (idle deadline, hard end).
+    flash: Option<(i64, i64)>,
 }
 
 #[derive(PartialEq)]
@@ -127,6 +129,7 @@ impl Broker {
                 overflow: false,
                 busy: false,
                 probe_until: None,
+                flash: None,
             },
         );
         Ok(())
@@ -227,6 +230,37 @@ impl Broker {
         }
     }
 
+    /// Whether a flash session is running; one that ran out is ended here (and the page told).
+    fn flash_live(&self, d: &mut Device) -> bool {
+        let now = self.now();
+        match d.flash {
+            Some((idle, end)) if idle > now && end > now => true,
+            Some(_) => {
+                Self::end_flash_session(d);
+                false
+            }
+            None => false,
+        }
+    }
+    /// Tells the page the session's deadlines (its banner and Cut off follow them).
+    fn flash_notice(d: &Device) {
+        if let Some((idle, end)) = d.flash {
+            (d.send)(json!({"type": "flash-session", "deviceId": d.d.id, "active": true, "until": end, "idle": idle}));
+        }
+    }
+    fn end_flash_session(d: &mut Device) {
+        if d.flash.take().is_some() {
+            (d.send)(json!({"type": "flash-session", "deviceId": d.d.id, "active": false}));
+        }
+    }
+    /// The owner cut the flash session off in the page; writes ask again from now on.
+    pub fn end_flash(&self, owner: &str, id: &str) {
+        let mut s = self.lock();
+        if let Some(d) = s.devices.get_mut(id).filter(|d| d.owner == owner) {
+            Self::end_flash_session(d);
+        }
+    }
+
     fn valid(&self, s: &Inner, p: &Pending) -> bool {
         let now = self.now();
         s.devices.get(&p.device_id).is_some_and(|d| {
@@ -311,6 +345,11 @@ impl Broker {
                 d.overflow = false;
                 return Ok(out);
             }
+            // Closing a flash session only takes rights away, so it needs no lease: a tool that just exited may still hold it.
+            if r.op == "flash.close" {
+                Self::end_flash_session(d);
+                return Ok(json!({}));
+            }
             if !d.lease.as_ref().is_some_and(|l| Some(&l.id) == r.lease.as_ref() && l.client == client) {
                 return Err("Valid exclusive lease required".into());
             }
@@ -351,6 +390,23 @@ impl Broker {
                 d.probe_until = Some(now + PROBE_IDLE_MS);
                 return Ok(json!({"session": "active"}));
             }
+            // Flash sessions: one approval covers the writes, control lines and line settings of one flash.
+            let flashing = self.flash_live(d);
+            if r.op == "flash.open" {
+                if flashing {
+                    // Never shortens a session still waiting for its first use.
+                    d.flash = d.flash.map(|(idle, end)| (idle.max(now + FLASH_IDLE_MS), end));
+                    Self::flash_notice(d);
+                    return Ok(json!({"session": "active"}));
+                }
+                if self.autonomous(d) {
+                    return Ok(json!({"session": "not needed"}));
+                }
+            }
+            if flashing && FLASH_OPS.contains(&r.op.as_str()) {
+                d.flash = d.flash.map(|(_, end)| (now + FLASH_IDLE_MS, end));
+                quiet = true;
+            }
             d.lease.as_mut().unwrap().expires = now + lease_ms;
             if r.op == "serial.read" {
                 if d.overflow {
@@ -366,7 +422,8 @@ impl Broker {
                 return Err("Too many pending requests".into());
             }
             d.busy = true;
-            // Approval is per operation, except DAP transfers: those were covered by approving the session.
+            // Approval is per operation, except inside a session: DAP transfers and flash-session writes were covered
+            // by approving the session.
             let approval = source == Source::Agent && !quiet && !self.autonomous(d);
             let (tx, rx) = oneshot::channel();
             let weak = Arc::downgrade(self);
@@ -412,6 +469,14 @@ impl Broker {
                 if let Some(d) = s.devices.get_mut(&device_id).filter(|d| d.token == token) {
                     d.probe_until = Some(until);
                     (d.send)(json!({"type": "probe-session", "deviceId": d.d.id, "active": true}));
+                }
+                json!({"session": "opened"})
+            }
+            "flash.open" => {
+                let now = self.now();
+                if let Some(d) = s.devices.get_mut(&device_id).filter(|d| d.token == token) {
+                    d.flash = Some((now + FLASH_START_MS, now + FLASH_MAX_MS));
+                    Self::flash_notice(d);
                 }
                 json!({"session": "opened"})
             }
@@ -467,6 +532,9 @@ fn list_entry(d: &Device, now: i64) -> Value {
     m.insert("generation".into(), json!(d.d.generation));
     m.insert("baudRate".into(), json!(d.d.baud_rate));
     m.insert("autonomous".into(), json!(d.d.autonomous_until.is_some_and(|u| u > now)));
+    if d.d.kind == "serial" {
+        m.insert("flashSession".into(), json!(d.flash.is_some_and(|(idle, end)| idle > now && end > now)));
+    }
     Value::Object(m)
 }
 
@@ -703,6 +771,127 @@ mod tests {
         assert_eq!(sent.lock().unwrap().last().unwrap()["type"], "operation");
         b.reply("browser", &id, true, None, None);
         done.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn flash_sessions_cover_one_flash_and_end_by_themselves() {
+        let clock = Arc::new(AtomicI64::new(now_ms()));
+        let c = clock.clone();
+        // Long leases, so moving the clock ends the session, not the lease.
+        let b = Broker::with_clock(Box::new(move || c.load(Ordering::SeqCst)), 3_600_000);
+        let sent: Sent = Arc::default();
+        let d = desc("serial", false);
+        b.expose("browser", sink(&sent), d.clone()).unwrap();
+        let last = || sent.lock().unwrap().last().cloned().unwrap();
+        let at = |op: &str, lease: Option<&str>, args: Value| req(&d.id, op, lease, args, clock.load(Ordering::SeqCst) + 5000);
+        let spawn = |r: Value| {
+            let b = b.clone();
+            tokio::spawn(async move { b.run("esptool", Source::Agent, &r).await })
+        };
+        let lease = b.run("esptool", Source::Agent, &at("serial.acquire", None, json!({}))).await.unwrap()["lease"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let open = |purpose: &str| at("flash.open", Some(&lease), json!({"purpose": purpose}));
+        let approve_open = |r: Value| async {
+            let p = spawn(r);
+            tick().await;
+            let m = last();
+            assert_eq!(m["type"], "approval");
+            let id = m["request"]["id"].as_str().unwrap().to_string();
+            b.approve("browser", &id, true);
+            b.reply("browser", &id, true, None, None);
+            assert_eq!(p.await.unwrap().unwrap(), json!({"session": "opened"}));
+            assert_eq!((last()["type"].clone(), last()["active"].clone()), (json!("flash-session"), json!(true)));
+        };
+        let straight = |op: &str, args: Value| {
+            let r = at(op, Some(&lease), args);
+            let id = r["id"].as_str().unwrap().to_string();
+            let p = spawn(r);
+            let b = b.clone();
+            async move {
+                tick().await;
+                assert_eq!(last()["type"], "operation", "{}", id);
+                b.reply("browser", &id, true, None, None);
+                p.await.unwrap().unwrap();
+            }
+        };
+        let asks = |op: &str, args: Value| {
+            let p = spawn(at(op, Some(&lease), args));
+            let b = b.clone();
+            async move {
+                tick().await;
+                let m = last();
+                assert_eq!(m["type"], "approval");
+                b.approve("browser", m["request"]["id"].as_str().unwrap(), false);
+                assert!(p.await.unwrap().unwrap_err().contains("denied"));
+            }
+        };
+        let list = || at("devices.list", None, json!({}));
+
+        // One approval, which shows the purpose the agent gave.
+        let p = spawn(open("esptool write-flash 0x10000 app.bin"));
+        tick().await;
+        assert_eq!(last()["request"]["args"]["purpose"], "esptool write-flash 0x10000 app.bin");
+        let id = last()["request"]["id"].as_str().unwrap().to_string();
+        b.approve("browser", &id, true);
+        b.reply("browser", &id, true, None, None);
+        assert_eq!(p.await.unwrap().unwrap(), json!({"session": "opened"}));
+        assert_eq!(b.run("esptool", Source::Agent, &list()).await.unwrap()[0]["flashSession"], true);
+        // Inside it, everything esptool does goes straight to the page...
+        straight("serial.signals", json!({"dataTerminalReady": false, "requestToSend": true})).await;
+        straight("serial.configure", json!({"baudRate": 460800})).await;
+        straight("serial.write", json!({"data": "AA=="})).await;
+        // ...but closing the port (which ends the share) still asks, and a second flash.open just keeps it going.
+        asks("serial.disconnect", json!({})).await;
+        assert_eq!(b.run("esptool", Source::Agent, &open("again")).await.unwrap(), json!({"session": "active"}));
+
+        // Two idle minutes end it: writes ask again.
+        clock.fetch_add(FLASH_IDLE_MS + 1, Ordering::SeqCst);
+        asks("serial.write", json!({"data": "AA=="})).await;
+        assert_eq!(b.run("esptool", Source::Agent, &list()).await.unwrap()[0]["flashSession"], false);
+
+        // A new session waits for its first use (a build may come first), then idles out as usual.
+        approve_open(open("idf.py flash")).await;
+        assert_eq!(last()["idle"].as_i64().unwrap() - clock.load(Ordering::SeqCst), FLASH_START_MS);
+        clock.fetch_add(FLASH_IDLE_MS + 1, Ordering::SeqCst);
+        straight("serial.write", json!({"data": "AA=="})).await;
+        clock.fetch_add(FLASH_IDLE_MS + 1, Ordering::SeqCst);
+        asks("serial.write", json!({"data": "AA=="})).await;
+        approve_open(open("never used")).await;
+        clock.fetch_add(FLASH_START_MS, Ordering::SeqCst);
+        asks("serial.write", json!({"data": "AA=="})).await;
+
+        // Closing needs no lease: the tool that flashed may still hold it.
+        approve_open(open("closed by another client")).await;
+        let close = req(&d.id, "flash.close", None, json!({}), clock.load(Ordering::SeqCst) + 5000);
+        assert_eq!(b.run("wrapper", Source::Agent, &close).await.unwrap(), json!({}));
+        assert_eq!(last()["active"], false);
+        asks("serial.write", json!({"data": "AA=="})).await;
+
+        // A busy session still ends 20 minutes after it opened.
+        approve_open(open("long flash")).await;
+        for _ in 0..19 {
+            clock.fetch_add(60_000, Ordering::SeqCst);
+            straight("serial.write", json!({"data": "AA=="})).await;
+        }
+        clock.fetch_add(60_000, Ordering::SeqCst);
+        asks("serial.write", json!({"data": "AA=="})).await;
+
+        // The owner can cut it off.
+        approve_open(open("third")).await;
+        b.end_flash("someone-else", &d.id);
+        straight("serial.write", json!({"data": "AA=="})).await;
+        b.end_flash("browser", &d.id);
+        assert_eq!(last()["active"], false);
+        asks("serial.write", json!({"data": "AA=="})).await;
+
+        // In autonomous mode no session is needed; a probe has none.
+        b.set_autonomy("browser", &d.id, Some(clock.load(Ordering::SeqCst) + 60_000)).unwrap();
+        assert_eq!(b.run("esptool", Source::Agent, &open("x")).await.unwrap(), json!({"session": "not needed"}));
+        let f = fixture(false, "probe");
+        let pl = f.lease("bridge").await;
+        assert!(f.b.run("bridge", Source::Agent, &f.r("flash.open", Some(&pl), json!({}))).await.unwrap_err().contains("no serial port"));
     }
 
     #[tokio::test]

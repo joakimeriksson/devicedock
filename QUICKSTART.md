@@ -174,9 +174,11 @@ cd /workspace && claude
 The agent reads `/workspace/AGENTS.md`, which explains `device list`, flashing, serial monitoring and the rules.
 Ask it something concrete, e.g. *"Make hello-world print a counter, flash it to the LaunchPad and show me the output."*
 
-**Approvals.** Every write to real hardware waits for a click in the page, and a debug session needs one
-approval. To let the agent work alone for a while, turn on **Autonomous (15 / 60 min)** for that device; it switches
-itself off afterwards. **Cut off** in the page stops a debug session at once.
+**Approvals.** Every write to real hardware waits for a click in the page, and the request says in words what it
+does (*Send 11 bytes: `print(6*7)\r`*, *Set control lines: DTR off, RTS on*). Flashing a board with esptool or
+`idf.py flash` asks once (*Allow one flash of this board*, with the agent's command), and a debug session asks once.
+To let the agent work alone for a while, turn on **Autonomous (15 / 60 min)** for that device; it switches itself off
+afterwards. **Cut off** in the page stops a flash or debug session at once.
 
 **Terminals in the page.**
 

@@ -7,7 +7,7 @@ type Item = { key: string; label: string; value: string; note: string; warn?: bo
  * amber when it needs a look (no firewall, open internet, autonomous writes, a restart waiting). */
 export function Summary(props: {
   health: { docker?: boolean; container?: boolean; agent?: boolean } | undefined;
-  boards: { shared: number; autonomous: number };
+  boards: { shared: number; autonomous: number; flashing: number };
   firewall: FirewallView | null;
   shares: SharesView | null;
   go: (where: string) => void;
@@ -39,8 +39,10 @@ export function Summary(props: {
       ? "use Chrome or Edge for USB"
       : boards.autonomous
         ? `${boards.autonomous} autonomous: writes don't ask`
-        : "every write asks you",
-    warn: boards.autonomous > 0,
+        : boards.flashing
+          ? `flashing: writes don't ask until done`
+          : "every write asks you",
+    warn: boards.autonomous > 0 || boards.flashing > 0,
     go: () => props.go("devices"),
   });
 

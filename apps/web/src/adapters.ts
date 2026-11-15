@@ -11,6 +11,7 @@ export type Signals = {
   break?: boolean;
 };
 import type { DeviceKind } from "../../../packages/protocol/index.ts";
+import { usbName, type UsbId } from "./usb";
 export type Descriptor = {
   id: string;
   name: string;
@@ -18,9 +19,14 @@ export type Descriptor = {
   /** Display-only labels for software devices; never used for policy. */
   engine?: string;
   board?: string;
+  /** USB devices: the vendor and product id (names it, remembers it, finds its other interfaces). */
+  usb?: UsbId;
 };
 export type DeviceEvent =
-  { type: "data"; bytes: Uint8Array } | { type: "disconnect"; error?: string };
+  | { type: "data"; bytes: Uint8Array }
+  | { type: "disconnect"; error?: string }
+  /** The same board is back under the same id (it was unplugged, or reset and re-enumerated); the port is closed. */
+  | { type: "reconnect" };
 export type Handler = (event: DeviceEvent) => void;
 export interface DeviceAdapter {
   listGranted(): Promise<Descriptor[]>;
@@ -129,29 +135,57 @@ export class WebSerialAdapter implements DeviceAdapter {
       reading?: Promise<void>;
       closing: boolean;
       handlers: Set<Handler>;
+      /** The port went away (unplugged, or the board reset and dropped off USB). */
+      lost?: boolean;
     }
   >();
   constructor() {
     navigator.serial?.addEventListener("disconnect", (event) => {
       for (const d of this.devices.values())
-        if (d.port === event.target) {
+        if (d.port === event.target && !d.lost) {
+          d.lost = true;
           for (const h of d.handlers)
             h({ type: "disconnect", error: "USB device unplugged" });
           void this.close(d.descriptor.id).catch(() => {});
         }
     });
+    // A board that comes back is the same device again (see register).
+    navigator.serial?.addEventListener("connect", (event) => {
+      this.register(event.target as SerialPort);
+    });
   }
+  /**
+   * The device for a port. A new port that has the USB id of exactly one lost device is taken to be that board coming
+   * back: ESP32-S3/C3 and RP2040 boards drop off USB when they reset, and the agent's device id and RFC 2217 port must
+   * survive that. With two lost boards of the same id it cannot tell them apart, so the new port becomes a new device.
+   */
   private register(port: SerialPort) {
     let d = [...this.devices.values()].find((d) => d.port === port);
     if (!d) {
       const info = port.getInfo();
-      const descriptor = {
-        id: crypto.randomUUID(),
-        name: `Serial ${info.usbVendorId?.toString(16) ?? "port"}:${info.usbProductId?.toString(16) ?? "unknown"}`,
-        kind: "serial" as const,
-      };
-      d = { descriptor, port, closing: false, handlers: new Set() };
-      this.devices.set(descriptor.id, d);
+      const usb =
+        info.usbVendorId !== undefined && info.usbProductId !== undefined
+          ? { vendorId: info.usbVendorId, productId: info.usbProductId }
+          : undefined;
+      const lost = usb
+        ? [...this.devices.values()].filter(
+            (e) => e.lost && e.descriptor.usb?.vendorId === usb.vendorId && e.descriptor.usb?.productId === usb.productId,
+          )
+        : [];
+      if (lost.length === 1) {
+        d = lost[0];
+        Object.assign(d, { port, lost: false, closing: false, reader: undefined, reading: undefined });
+        for (const h of d.handlers) h({ type: "reconnect" });
+      } else {
+        const descriptor = {
+          id: crypto.randomUUID(),
+          name: usbName(info.usbVendorId, info.usbProductId),
+          kind: "serial" as const,
+          ...(usb ? { usb } : {}),
+        };
+        d = { descriptor, port, closing: false, handlers: new Set() };
+        this.devices.set(descriptor.id, d);
+      }
     }
     return d.descriptor;
   }
@@ -159,10 +193,19 @@ export class WebSerialAdapter implements DeviceAdapter {
     if (!navigator.serial) return [];
     return (await navigator.serial.getPorts()).map((p) => this.register(p));
   }
-  async requestDevice() {
+  /** `filters` narrows the browser's chooser, e.g. to the serial ports of a debug probe's board. */
+  async requestDevice(filters?: { usbVendorId: number; usbProductId: number }[]) {
     if (!navigator.serial)
       throw Error("WebSerial requires Chrome or Edge on localhost");
-    return this.register(await navigator.serial.requestPort());
+    return this.register(await navigator.serial.requestPort(filters ? { filters } : undefined));
+  }
+  /** Whether the device's port is gone (unplugged, and not back). */
+  isLost(id: string) {
+    return !!this.devices.get(id)?.lost;
+  }
+  /** Drops a device whose port is gone, so its row can be removed. */
+  forget(id: string) {
+    if (this.devices.get(id)?.lost) this.devices.delete(id);
   }
   private get(id: string) {
     const d = this.devices.get(id);
@@ -174,13 +217,16 @@ export class WebSerialAdapter implements DeviceAdapter {
     if (d.port.readable) await this.close(id);
     await d.port.open(options);
     d.closing = false;
+    // The loop belongs to this port: once the board is back on a new port, the old loop never reports anything.
+    const port = d.port;
+    const mine = () => d.port === port && !d.closing;
     d.reading = (async () => {
       try {
-        while (d.port.readable && !d.closing) {
-          const reader = d.port.readable.getReader();
+        while (port.readable && mine()) {
+          const reader = port.readable.getReader();
           d.reader = reader;
           try {
-            while (!d.closing) {
+            while (mine()) {
               const { value, done } = await reader.read();
               if (done) break;
               if (value)
@@ -188,11 +234,11 @@ export class WebSerialAdapter implements DeviceAdapter {
             }
           } finally {
             reader.releaseLock();
-            d.reader = undefined;
+            if (d.reader === reader) d.reader = undefined;
           }
         }
       } catch (e) {
-        if (!d.closing)
+        if (mine())
           for (const h of d.handlers)
             h({ type: "disconnect", error: (e as Error).message });
       }
@@ -200,10 +246,12 @@ export class WebSerialAdapter implements DeviceAdapter {
   }
   async close(id: string) {
     const d = this.get(id);
+    // The port this close is for: a board that comes back meanwhile gets a new port object (register), never closed here.
+    const port = d.port;
     d.closing = true;
     await d.reader?.cancel().catch(() => {});
     await d.reading;
-    if (d.port.readable || d.port.writable) await d.port.close();
+    if (port.readable || port.writable) await port.close();
   }
   async write(id: string, bytes: Uint8Array) {
     const d = this.get(id);
@@ -220,6 +268,7 @@ export class WebSerialAdapter implements DeviceAdapter {
   }
   subscribe(id: string, h: Handler) {
     this.get(id).handlers.add(h);
-    return () => this.get(id).handlers.delete(h);
+    // Safe after forget(): the device may be gone by the time its row unsubscribes.
+    return () => void this.devices.get(id)?.handlers.delete(h);
   }
 }

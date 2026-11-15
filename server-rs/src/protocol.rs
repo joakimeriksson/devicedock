@@ -112,10 +112,19 @@ fn lit_default(m: &Map<String, Value>, k: &str, allowed: &[i64], default: i64) -
     }
 }
 
-pub const OPS: [&str; 12] = [
+pub const OPS: [&str; 14] = [
     "devices.list", "serial.acquire", "serial.release", "serial.connect", "serial.disconnect", "serial.configure",
-    "serial.signals", "serial.write", "probe.open", "probe.close", "probe.transfer", "serial.read",
+    "serial.signals", "serial.write", "probe.open", "probe.close", "probe.transfer", "flash.open", "flash.close",
+    "serial.read",
 ];
+/// A new flash session waits this long for its first write, signal or line change (`idf.py flash` builds first)...
+pub const FLASH_START_MS: i64 = 10 * 60 * 1000;
+/// ...then ends after this long without one...
+pub const FLASH_IDLE_MS: i64 = 2 * 60 * 1000;
+/// ...and this long after it opened at the latest, however busy it is.
+pub const FLASH_MAX_MS: i64 = 20 * 60 * 1000;
+/// Operations a flash session covers: everything esptool does to a port, except closing it (that ends the share).
+pub const FLASH_OPS: [&str; 4] = ["serial.write", "serial.signals", "serial.configure", "serial.connect"];
 
 #[derive(Clone, Debug)]
 pub struct Request {
@@ -167,11 +176,19 @@ fn serial_options(a: &Map<String, Value>) -> R<Value> {
 fn parse_args(op: &str, v: &Value) -> R<Value> {
     let a = obj(v, "args")?;
     match op {
-        "devices.list" | "serial.acquire" | "serial.release" | "serial.disconnect" | "probe.open" | "probe.close" => {
+        "devices.list" | "serial.acquire" | "serial.release" | "serial.disconnect" | "probe.open" | "probe.close"
+        | "flash.close" => {
             strict(a, &[], "args")?;
             Ok(json!({}))
         }
         "serial.connect" | "serial.configure" => serial_options(a),
+        "flash.open" => {
+            strict(a, &["purpose"], "args")?;
+            Ok(match opt_str(a, "purpose", 0, 200)? {
+                Some(p) => json!({ "purpose": p }),
+                None => json!({}),
+            })
+        }
         "serial.signals" => {
             strict(a, &["dataTerminalReady", "requestToSend", "break"], "args")?;
             let mut out = Map::new();
@@ -267,6 +284,7 @@ pub enum BrowserMessage {
     Data { device_id: String, generation: i64, data: Vec<u8> },
     Reply { id: String, ok: bool, error: Option<String>, data: Option<String> },
     ProbeEnd { device_id: String },
+    FlashEnd { device_id: String },
     Approve { id: String, allow: bool },
     Rpc(Value),
 }
@@ -278,6 +296,7 @@ pub fn parse_browser_message(v: &Value) -> R<BrowserMessage> {
         "expose" => BrowserMessage::Expose(parse_descriptor(m.get("device").ok_or("device: required")?)?),
         "revoke" => BrowserMessage::Revoke { device_id: req_uuid(m, "deviceId")? },
         "probe-end" => BrowserMessage::ProbeEnd { device_id: req_uuid(m, "deviceId")? },
+        "flash-end" => BrowserMessage::FlashEnd { device_id: req_uuid(m, "deviceId")? },
         "autonomy" => BrowserMessage::Autonomy {
             device_id: req_uuid(m, "deviceId")?,
             until: match m.get("until") {
@@ -341,6 +360,15 @@ mod tests {
         assert!(parse_request(&json!({"v":1,"id":id(),"op":"serial.acquire","deadline":5,"args":{"x":1}})).is_err());
         let rd = parse_request(&json!({"v":1,"id":id(),"op":"serial.read","deadline":5.0,"args":{}})).unwrap();
         assert_eq!(rd.arg_i64("maxBytes"), Some(16384));
+    }
+    #[test]
+    fn flash_open_purpose() {
+        let r = |args: Value| parse_request(&json!({"v":1,"id":id(),"op":"flash.open","deadline":5,"args":args}));
+        assert_eq!(r(json!({})).unwrap().args, json!({}));
+        assert_eq!(r(json!({"purpose":"esptool write-flash"})).unwrap().args, json!({"purpose":"esptool write-flash"}));
+        assert!(r(json!({"purpose":"x".repeat(201)})).is_err());
+        assert!(r(json!({"seconds":60})).is_err());
+        assert!(parse_request(&json!({"v":1,"id":id(),"op":"flash.close","deadline":5,"args":{"x":1}})).is_err());
     }
     #[test]
     fn descriptor_kinds() {

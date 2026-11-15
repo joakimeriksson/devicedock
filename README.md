@@ -297,8 +297,11 @@ esptool --port rfc2217://127.0.0.1:2217 --chip esp32 chip-id
 esptool --port rfc2217://127.0.0.1:2217 --chip esp32 write-flash 0x10000 build/firmware.bin
 ```
 
-Workflow: *Add serial port* → *Open & share* → turn on **Autonomous** (15/60 min) → the agent builds,
-flashes and reads output on its own. Without autonomous mode every write waits for your approval click.
+Workflow: *Add serial port* → *Open & share* → the agent builds and flashes; each flash asks you once (**Allow one
+flash of this board**, showing the agent's esptool or `idf.py` command), and the session ends when the flash is done.
+Other writes wait for your click, shown in words. To let the agent work alone for a while, turn on **Autonomous**
+(15/60 min). Boards that drop off USB when they reset (ESP32-S3/C3 built-in USB, Pico) stay shared under the same id
+and port if they are back within 15 s; autonomous mode and a flash session end when they drop, so writes ask again.
 One client holds the device at a time (exclusive lease). `AGENTS.md` / `CLAUDE.md` in `/workspace` tell the
 agents this. Safety trade-offs: see SECURITY.md. Verified with real pyserial and esptool 5.6 against a
 simulated device (`tests/rfc2217/run.sh`); **verified on a real ESP32-D0WDQ6-V3 (CH9102 USB-serial) on 2026-11-07**: `esptool chip-id` entered the bootloader automatically, uploaded the stub flasher and read the MAC through the bridge. Not yet verified on real hardware: flash writes, `mpremote`, and an agent driving the loop.

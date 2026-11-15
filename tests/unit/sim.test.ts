@@ -29,7 +29,7 @@ const setup = async () => {
   const d = a.create(profile);
   const got: string[] = [];
   const events: string[] = [];
-  a.subscribe(d.id, (e) => (e.type === "data" ? got.push(new TextDecoder().decode(e.bytes)) : events.push(e.type + (e.error ? ":" + e.error : ""))));
+  a.subscribe(d.id, (e) => (e.type === "data" ? got.push(new TextDecoder().decode(e.bytes)) : events.push(e.type + (e.type === "disconnect" && e.error ? ":" + e.error : ""))));
   await a.open(d.id, { baudRate: 115200 });
   return { a, d, got, events, eng: Fake.last };
 };

@@ -350,6 +350,11 @@ export function startRfc2217(api: Api, port = RFC2217_PORT_BASE, host = "127.0.0
     } finally {
       socket.destroy();
       if (lease) {
+        // Finish what the client asked for before letting go: esptool's last DTR/RTS change (releasing the reset after
+        // a flash) can still be waiting in the 80 ms merge window when it closes the socket, and queued writes or
+        // signals would otherwise fail on a released lease and leave the board held in reset.
+        await flushSignals();
+        await chain;
         try {
           await api.call("serial.release", device, {}, lease);
           if (held.get(device.id)?.lease === lease) held.delete(device.id);
