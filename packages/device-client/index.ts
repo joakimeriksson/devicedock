@@ -10,6 +10,10 @@ export type Device = {
   engine?: string;
   board?: string;
   baudRate: number;
+  /** The human enabled unattended writes for this real device. */
+  autonomous?: boolean;
+  /** Serial devices: an approved flash session is running (`device flash-open`). */
+  flashSession?: boolean;
 };
 export class DeviceClient {
   readonly client = randomUUID();

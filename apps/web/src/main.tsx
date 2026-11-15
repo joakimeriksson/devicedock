@@ -1,6 +1,6 @@
 import {
   request as protocolRequest,
-  options as serialOptions, isPhysical, isVirtual } from "../../../packages/protocol/index.ts";
+  options as serialOptions, isPhysical, isVirtual, FLASH_IDLE_MS, FLASH_MAX_MS } from "../../../packages/protocol/index.ts";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -17,6 +17,8 @@ import type { SharesView } from "./Shares";
 import { Settings } from "./Settings";
 import { Summary } from "./Summary";
 import { usePoll } from "./access";
+import { describe } from "./approval";
+import { migrateRememberKey, usbKey } from "./usb";
 import { useTheme, type ThemePref } from "./theme";
 import "./sim/engines";
 import { SimAdapter } from "./sim/SimAdapter";
@@ -35,7 +37,18 @@ type Row = Descriptor & {
   autonomousUntil?: number;
   /** Debug probe: an approved session is active (agents' OpenOCD can drive the chip without further clicks). */
   probeSession?: boolean;
+  /** The port is gone (unplugged, or the board reset and dropped off USB). */
+  unplugged?: boolean;
+  /** A shared board that went away stays shared, under the same id, if it comes back before this time. */
+  waitingUntil?: number;
+  /** An approved flash session: its hard end, and the last operation in it (it also ends after FLASH_IDLE_MS). */
+  flashUntil?: number;
+  flashSeen?: number;
 };
+/** How long a shared board may be gone and still come back shared: an ESP32-S3 or RP2040 reset takes a second or two. */
+const RECONNECT_GRACE_MS = 15000;
+const flashing = (r: Row, now: number) =>
+  !!r.flashUntil && r.flashUntil > now && now - (r.flashSeen ?? 0) < FLASH_IDLE_MS;
 type Rpc = {
   v: 1;
   id: string;
@@ -52,11 +65,14 @@ const REMEMBER_KEY = "devicedock.autoshare";
 function loadRemembered(): Record<string, number> {
   try {
     const v = JSON.parse(localStorage.getItem(REMEMBER_KEY) ?? "{}");
-    return v && typeof v === "object" ? v : {};
+    if (!v || typeof v !== "object") return {};
+    return Object.fromEntries(Object.entries(v).map(([k, baud]) => [migrateRememberKey(k), baud as number]));
   } catch {
     return {};
   }
 }
+/** What auto-share remembers a board by: its USB id ("10c4:ea60"), else its name. */
+const rememberKey = (r: Pick<Descriptor, "usb" | "name">) => (r.usb ? usbKey(r.usb) : r.name);
 function saveRemembered(m: Record<string, number>) {
   try {
     localStorage.setItem(REMEMBER_KEY, JSON.stringify(m));
@@ -88,6 +104,8 @@ function App() {
     [monitorMode, setMonitorMode] = useState<"text" | "chunks">("text"),
     [copied, setCopied] = useState<"" | "ok" | "failed">(""),
     [approvals, setApprovals] = useState<Rpc[]>([]),
+    // Flips the approval dialog's byte view: binary shows as hex by default, text as text.
+    [approvalFlip, setApprovalFlip] = useState(false),
     [text, setText] = useState("PING\n"),
     [hex, setHex] = useState(false),
     [baud, setBaud] = useState(115200),
@@ -125,6 +143,7 @@ function App() {
     saveRemembered(next);
   }
   const monitorEnd = useRef<HTMLDivElement>(null);
+  const reconnectTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const socket = useRef<WebSocket | null>(null),
     rowsRef = useRef<Row[]>([]),
     pending = useRef(
@@ -361,6 +380,14 @@ function App() {
         else if (m.type === "operation") void execute(m.request);
         else if (m.type === "probe-session")
           update((old) => old.map((r) => (r.id === m.deviceId ? { ...r, probeSession: !!m.active } : r)));
+        else if (m.type === "flash-session")
+          update((old) =>
+            old.map((r) =>
+              r.id === m.deviceId
+                ? { ...r, flashUntil: m.active ? m.until : undefined, flashSeen: m.active ? Date.now() : undefined }
+                : r,
+            ),
+          );
       };
     }
     async function execute(r: Rpc) {
@@ -375,10 +402,17 @@ function App() {
         );
         if (!row || r.deadline <= Date.now())
           throw Error("Device revoked, stale, or deadline expired");
+        if (row.waitingUntil)
+          throw Error("The board dropped off USB (unplugged, or it reset) and has not come back yet; try again in a few seconds");
+        if (row.flashUntil)
+          update((old) => old.map((d) => (d.id === row.id ? { ...d, flashSeen: Date.now() } : d)));
         if (r.op === "probe.transfer") {
           // DAP packets are not logged to the serial monitor: there are hundreds per second while flashing.
           if (!(row.adapter instanceof ProbeAdapter)) throw Error("Not a debug probe");
           data = encode(await row.adapter.transfer(row.id, decode(r.args.data as string)));
+        } else if (r.op === "flash.open") {
+          // Nothing to do on the hardware: the backend starts the session when this succeeds.
+          log(new TextEncoder().encode("flash session approved"), "FLASH", row);
         } else if (r.op === "probe.open") {
           await row.adapter.open(row.id, { baudRate: 115200 });
           log(new TextEncoder().encode("debug session approved and opened"), "PROBE", row);
@@ -436,17 +470,22 @@ function App() {
     autoSharing.current = true;
     try {
       for (const d of await serial.listGranted()) await add(serial, d);
-      for (const name of Object.keys(mem)) {
-        const same = rowsRef.current.filter(
-          (r) => r.kind === "serial" && r.name === name,
-        );
-        // A re-plugged board leaves a dead earlier row; only the newest one can be opened.
-        const row = same.at(-1);
-        if (!row || same.some((r) => r.exposed)) continue;
+      for (const key of Object.keys(mem)) {
+        const same = rowsRef.current.filter((r) => r.kind === "serial" && rememberKey(r) === key && !r.unplugged);
+        if (!same.length || same.some((r) => r.exposed)) continue;
+        // Two boards with the same USB id look identical to the browser (WebSerial gives no serial number). Sharing
+        // one of them at random could send the agent's writes to the wrong board, so neither is shared.
+        if (same.length > 1) {
+          setError(
+            `${same.length} boards look the same to the browser (${same[0].name}), so none was shared automatically. ` +
+              "Share the one you mean with Open & share.",
+          );
+          continue;
+        }
         try {
-          await expose(row, { baudRate: mem[name] });
+          await expose(same[0], { baudRate: mem[key] });
         } catch (e) {
-          setError(`Auto-share of ${name} failed: ${(e as Error).message}`);
+          setError(`Auto-share of ${same[0].name} failed: ${(e as Error).message}`);
         }
       }
     } finally {
@@ -468,6 +507,10 @@ function App() {
     };
     adapter.subscribe(d.id, (event) => {
       const current = rowsRef.current.find((r) => r.id === d.id);
+      if (event.type === "reconnect") {
+        void reattach(d.id);
+        return;
+      }
       if (event.type === "data") {
         log(event.bytes, "RX", d);
         if (current?.exposed)
@@ -482,20 +525,81 @@ function App() {
             } catch {}
           }
       } else {
-        if (current?.exposed)
-          try {
-            send({ type: "revoke", deviceId: d.id });
-          } catch {}
-        update((old) =>
-          old.map((r) =>
-            r.id === d.id ? { ...r, open: false, exposed: false } : r,
-          ),
-        );
+        if (current?.waitingUntil) return; // already waiting for it (the read loop and the unplug event both report)
         setApprovals((old) => old.filter((r) => r.deviceId !== d.id));
-        setError(event.error ?? "Device disconnected");
+        // A shared USB serial board stays shared for a moment: if it comes back (a reset that re-enumerates, a
+        // wobbly cable) it keeps its id, generation and RFC 2217 port, and the agent's tools can carry on.
+        if (current?.exposed && adapter instanceof WebSerialAdapter) {
+          update((old) =>
+            old.map((r) =>
+              r.id === d.id ? { ...r, open: false, unplugged: true, waitingUntil: Date.now() + RECONNECT_GRACE_MS } : r,
+            ),
+          );
+          log(
+            new TextEncoder().encode(`dropped off USB; still shared if it is back within ${RECONNECT_GRACE_MS / 1000} s`),
+            "USB",
+            d,
+          );
+          reconnectTimers.current.set(d.id, setTimeout(() => giveUp(d.id, event.error), RECONNECT_GRACE_MS));
+          return;
+        }
+        giveUp(d.id, event.error);
       }
     });
     update((old) => [...old, row]);
+  }
+  /** The board did not come back in time (or was not shared): stop sharing it, as on any disconnect. */
+  function giveUp(id: string, error?: string) {
+    clearTimeout(reconnectTimers.current.get(id));
+    reconnectTimers.current.delete(id);
+    const row = rowsRef.current.find((r) => r.id === id);
+    if (!row) return;
+    if (row.exposed)
+      try {
+        send({ type: "revoke", deviceId: id });
+      } catch {}
+    update((old) =>
+      old.map((r) =>
+        r.id === id
+          ? {
+              ...r,
+              open: false,
+              exposed: false,
+              unplugged: r.adapter instanceof WebSerialAdapter ? true : r.unplugged,
+              waitingUntil: undefined,
+              flashUntil: undefined,
+              probeSession: false,
+            }
+          : r,
+      ),
+    );
+    setError(`${row.name}: ${error ?? "Device disconnected"}`);
+  }
+  /** The same board is back (see WebSerialAdapter.register). If it is still within its grace time, reopen it. */
+  async function reattach(id: string) {
+    const row = rowsRef.current.find((r) => r.id === id);
+    if (!row) return;
+    const waiting = !!row.waitingUntil && row.waitingUntil > Date.now() && row.exposed;
+    clearTimeout(reconnectTimers.current.get(id));
+    reconnectTimers.current.delete(id);
+    update((old) => old.map((r) => (r.id === id ? { ...r, unplugged: false, waitingUntil: undefined } : r)));
+    if (!waiting) return;
+    try {
+      // Some boards need a moment after enumerating before the port opens.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await row.adapter.open(id, serialOptions.parse({ baudRate: row.baudRate }));
+          break;
+        } catch (e) {
+          if (attempt >= 4) throw e;
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      }
+      update((old) => old.map((r) => (r.id === id ? { ...r, open: true } : r)));
+      log(new TextEncoder().encode("back on USB; still shared under the same id"), "USB", row);
+    } catch (e) {
+      giveUp(id, `came back but could not be reopened: ${(e as Error).message}`);
+    }
   }
   async function expose(row: Row, auto?: { baudRate: number }) {
     if (
@@ -518,7 +622,7 @@ function App() {
     if (!row.open)
       await row.adapter.open(row.id, serialOptions.parse({ baudRate: useBaud }));
     if (row.kind === "serial" && !auto)
-      setRemembered({ ...rememberedRef.current, [row.name]: useBaud });
+      setRemembered({ ...rememberedRef.current, [rememberKey(row)]: useBaud });
     const next = {
       ...row,
       open: true,
@@ -559,14 +663,18 @@ function App() {
     return true;
   }
   function revoke(row: Row) {
-    if (row.name in rememberedRef.current) {
-      const { [row.name]: _drop, ...rest } = rememberedRef.current;
+    if (rememberKey(row) in rememberedRef.current) {
+      const { [rememberKey(row)]: _drop, ...rest } = rememberedRef.current;
       setRemembered(rest);
     }
+    clearTimeout(reconnectTimers.current.get(row.id));
+    reconnectTimers.current.delete(row.id);
     send({ type: "revoke", deviceId: row.id });
     update((old) =>
       old.map((r) =>
-        r.id === row.id ? { ...r, exposed: false, autonomousUntil: undefined, probeSession: false } : r,
+        r.id === row.id
+          ? { ...r, exposed: false, autonomousUntil: undefined, probeSession: false, waitingUntil: undefined, flashUntil: undefined }
+          : r,
       ),
     );
     setApprovals((old) => old.filter((r) => r.deviceId !== row.id));
@@ -578,6 +686,10 @@ function App() {
       throw Error("Hex input must contain complete byte pairs");
     return Uint8Array.from(s.match(/../g) ?? [], (x) => parseInt(x, 16));
   }
+  const ask = approvals.length ? describe(approvals[0].op, approvals[0].args) : undefined!;
+  const askId = approvals[0]?.id;
+  useEffect(() => setApprovalFlip(false), [askId]);
+  const askRow = approvals.length ? rows.find((r) => r.id === approvals[0].deviceId) : undefined;
   return (
     <div className="app">
       {pendingConfirm && (
@@ -662,6 +774,7 @@ function App() {
           boards={{
             shared: rows.filter((r) => r.exposed).length,
             autonomous: rows.filter((r) => r.exposed && r.autonomousUntil && r.autonomousUntil > now).length,
+            flashing: rows.filter((r) => r.exposed && flashing(r, now)).length,
           }}
           firewall={firewall}
           shares={shares}
@@ -779,8 +892,18 @@ function App() {
                 <article className="device" key={row.id}>
                   <div className="device-heading">
                     <b>{row.name}</b>
-                    <span className={row.exposed ? "badge shared" : "badge"}>
-                      {row.exposed ? "Shared" : "Private"}
+                    <span
+                      className={
+                        row.waitingUntil ? "badge waiting" : row.exposed ? "badge shared" : row.unplugged ? "badge gone" : "badge"
+                      }
+                    >
+                      {row.waitingUntil
+                        ? `Reconnecting… ${Math.min(RECONNECT_GRACE_MS / 1000, Math.max(0, Math.ceil((row.waitingUntil - now) / 1000)))}s`
+                        : row.exposed
+                          ? "Shared"
+                          : row.unplugged
+                            ? "Unplugged"
+                            : "Private"}
                     </span>
                   </div>
                   <small>
@@ -788,9 +911,10 @@ function App() {
                       ? "Browser mock"
                       : row.kind === "sim"
                         ? `Simulated · ${row.engine ?? "emulator"}${row.board ? ` · ${row.board}` : ""}`
-                        : "WebSerial"}{" "}
-                    ·{" "}
-                    {row.baudRate} baud · generation {row.generation}
+                        : row.kind === "probe"
+                          ? "Debug probe"
+                          : "WebSerial"}
+                    {row.kind !== "probe" && ` · ${row.baudRate} baud`} · generation {row.generation}
                   </small>
                   <code className="device-id">{row.id}</code>
                   <div className="row-actions">
@@ -801,12 +925,42 @@ function App() {
                       >
                         Revoke access
                       </button>
+                    ) : row.unplugged ? (
+                      row.adapter === serial && (
+                        <button
+                          title="Plug it back in and it reappears here"
+                          onClick={() => {
+                            serial.forget(row.id);
+                            update((old) => old.filter((r) => r.id !== row.id));
+                          }}
+                        >
+                          Remove
+                        </button>
+                      )
                     ) : (
                       <button
                         disabled={!connected}
                         onClick={() => run(() => expose(row))}
                       >
                         Open & share
+                      </button>
+                    )}
+                    {row.kind === "probe" && row.usb && "serial" in navigator && (
+                      <button
+                        disabled={!connected}
+                        title="The same board's serial ports: the console of the chip this probe debugs"
+                        onClick={() =>
+                          run(async () =>
+                            add(
+                              serial,
+                              await serial.requestDevice([
+                                { usbVendorId: row.usb!.vendorId, usbProductId: row.usb!.productId },
+                              ]),
+                            ),
+                          )
+                        }
+                      >
+                        ＋ Its serial port
                       </button>
                     )}
                     {row.open && !row.exposed && (
@@ -838,12 +992,12 @@ function App() {
                     <label>
                       <input
                         type="checkbox"
-                        checked={row.name in remembered}
+                        checked={rememberKey(row) in remembered}
                         onChange={(e) => {
-                          const { [row.name]: _drop, ...rest } = remembered;
+                          const { [rememberKey(row)]: _drop, ...rest } = remembered;
                           setRemembered(
                             e.target.checked
-                              ? { ...rest, [row.name]: row.baudRate }
+                              ? { ...rest, [rememberKey(row)]: row.baudRate }
                               : rest,
                           );
                         }}
@@ -1071,8 +1225,29 @@ function App() {
         </div>
       </main>
       {csrf && <FirewallAsks csrf={csrf} view={firewall} setView={setFirewall} />}
-      {rows.some((r) => r.probeSession && r.exposed) && (
+      {rows.some((r) => r.exposed && (r.probeSession || flashing(r, now))) && (
         <div className="probe-banner" role="status">
+          {rows
+            .filter((r) => r.exposed && flashing(r, now))
+            .map((r) => (
+              <div key={r.id}>
+                <span>
+                  <i className="dot" /> FLASH SESSION · {deviceLabel(r.id, r.name)}: writes and resets run without asking,
+                  for {Math.min(FLASH_MAX_MS / 60000, Math.max(0, Math.ceil((r.flashUntil! - now) / 60000)))} min at most
+                </span>
+                <button
+                  className="danger"
+                  onClick={() => {
+                    try {
+                      send({ type: "flash-end", deviceId: r.id });
+                    } catch {}
+                    update((old) => old.map((x) => (x.id === r.id ? { ...x, flashUntil: undefined } : x)));
+                  }}
+                >
+                  Cut off
+                </button>
+              </div>
+            ))}
           {rows
             .filter((r) => r.probeSession && r.exposed)
             .map((r) => (
@@ -1106,14 +1281,37 @@ function App() {
             <div className="eyebrow">
               HUMAN APPROVAL REQUIRED · {approvals.length} waiting
             </div>
-            <h2>Allow this device operation?</h2>
-            <p>
-              Arbitrary serial bytes and control signals may change hardware
-              state. Tools like esptool send dozens of operations; for a
-              flashing session use “Allow all for 15 min” instead of clicking
-              each one.
+            <h2>{ask.title}</h2>
+            <p className="approval-device">
+              {askRow ? deviceLabel(askRow.id, askRow.name) : "Unknown device"} · answer within{" "}
+              {Math.max(0, Math.ceil((approvals[0].deadline - now) / 1000))} s
             </p>
-            <pre>{JSON.stringify(approvals[0], null, 2)}</pre>
+            <p>{ask.detail}</p>
+            {ask.purpose && (
+              <>
+                <p className="approval-says">The agent says it will run (its own words, not checked):</p>
+                <pre className="approval-data">{ask.purpose}</pre>
+              </>
+            )}
+            {ask.data && (
+              <>
+                <div className="approval-data-head">
+                  <span>
+                    {ask.data.shown < ask.data.size
+                      ? `First ${ask.data.shown} of ${ask.data.size} bytes`
+                      : `${ask.data.size} byte${ask.data.size === 1 ? "" : "s"}`}
+                  </span>
+                  <button onClick={() => setApprovalFlip(!approvalFlip)}>
+                    {ask.data.binary !== approvalFlip ? "As text" : "As hex"}
+                  </button>
+                </div>
+                <pre className="approval-data">{ask.data.binary !== approvalFlip ? ask.data.hex : ask.data.text}</pre>
+              </>
+            )}
+            <details className="approval-raw">
+              <summary>Request as sent</summary>
+              <pre>{JSON.stringify(approvals[0], null, 2)}</pre>
+            </details>
             <button
               className="danger"
               onClick={() => {
@@ -1134,13 +1332,15 @@ function App() {
               Deny
             </button>
             <button
+              className={ask.session ? "primary" : ""}
               onClick={() => {
                 send({ type: "approve", id: approvals[0].id, allow: true });
                 setApprovals((old) => old.slice(1));
               }}
             >
-              Allow once
+              {ask.session ? "Allow" : "Allow once"}
             </button>
+            {!ask.session && (
             <button
               className="primary"
               onClick={async () => {
@@ -1154,6 +1354,7 @@ function App() {
             >
               Allow all for 15 min
             </button>
+            )}
           </section>
         </div>
       )}

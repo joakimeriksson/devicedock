@@ -507,6 +507,10 @@ async fn device_socket(app: Shared, socket: WebSocket) {
                 b.end_probe(&owner, &device_id);
                 Ok(())
             }
+            Ok(BrowserMessage::FlashEnd { device_id }) => {
+                b.end_flash(&owner, &device_id);
+                Ok(())
+            }
             Ok(BrowserMessage::Rpc(request)) => {
                 if in_flight.load(Ordering::SeqCst) >= 32 {
                     Err("Too many requests".into())

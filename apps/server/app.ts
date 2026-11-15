@@ -189,6 +189,7 @@ export function createApp({
         else if (m.type === "approve") broker.approve(owner, m.id, m.allow);
         else if (m.type === "reply") broker.reply(owner, m.id, m.ok, m.error, m.data);
         else if (m.type === "probe-end") broker.endProbe(owner, m.deviceId);
+        else if (m.type === "flash-end") broker.endFlash(owner, m.deviceId);
         else if (m.type === "rpc") {
           if (inFlight >= 32) throw Error("Too many requests");
           inFlight++;

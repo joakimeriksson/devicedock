@@ -98,6 +98,25 @@ approval is a **session**:
 The trade-off is explicit: inside a session, the agent can do anything a debugger can, including erasing and locking
 the chip. The banner and the 10-minute idle limit bound that window.
 
+**Flash sessions (serial boards).** The same idea for esptool. Entering the ROM bootloader takes several DTR/RTS changes
+within a fraction of a second, so per-operation approval cannot flash a board; before flash sessions the only way was
+autonomous mode, which lets every agent write for 15 minutes or more.
+- `flash.open` needs one human approval. The agent may give a `purpose` (at most 200 characters, e.g. the esptool
+  command line); the page shows it as the agent's own words. Like a probe session it belongs to the device, not to a
+  lease: `device flash-open` approves it and esptool's RFC 2217 connection uses it.
+- Inside the session `serial.write`, `serial.signals`, `serial.configure` and `serial.connect` from agents need no
+  approval. `serial.disconnect` still does (it ends the share).
+- It ends on `flash.close`, after 2 minutes without such an operation, 15 minutes after it opened however busy it is,
+  when the owner clicks **Cut off**, or when the device is revoked. `devices.list` reports `flashSession`.
+- In the sandbox, `esptool` and `devicedock-flash <command>` (which `idf.py ... flash` goes through) open a session
+  before the tool runs and close it when it exits, so a flash costs the human one click.
+
+**Boards that re-enumerate.** ESP32-S3/C3 boards on their built-in USB and the RP2040 drop off USB when they reset. The
+page keeps such a shared board shared for 15 s: a port that comes back with the USB id of exactly one lost device gets
+the same device id, generation and RFC 2217 port, and is reopened at the same baud rate. Operations in the gap fail
+(*dropped off USB*). If it does not come back, or two lost boards share the USB id (WebSerial gives no serial number to
+tell them apart), the share is revoked as before.
+
 ## 5. Adding another browser simulator (checklist)
 
 1. Write `apps/web/src/sim/engines/<name>.ts` implementing `SimEngine`; convert its frames to RGBA, name its

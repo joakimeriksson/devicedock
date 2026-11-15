@@ -5,3 +5,9 @@ export IDF_TOOLS_PATH=/opt/espressif IDF_PATH=/opt/esp-idf
 # IDF also puts its own openocd-esp32 first on PATH; DeviceDock's OpenOCD (CMSIS-DAP over TCP, for shared probes) is put
 # back in front, and OPENOCD_SCRIPTS (which IDF points at Espressif's scripts) is cleared so it finds its own target/ti/...
 get_idf() { mkdir -p "$HOME/.cache/esp-idf-root-components"; PATH="${PATH#/opt/venv/bin:}"; . /opt/esp-idf/export.sh; PATH="/opt/openocd/bin:$PATH:/opt/venv/bin"; unset OPENOCD_SCRIPTS; }
+# `idf.py ... flash` (flash, app-flash, erase-flash, ...) on a shared real board: idf.py runs its own esptool, so it goes
+# through devicedock-flash, which asks the human once for a flash session and closes it afterwards.
+# Bash only: profile.d is also read by sh (dash), which cannot parse a function name with a dot, hence the eval.
+if [ -n "$BASH_VERSION" ]; then
+  eval 'idf.py() { case " $* " in *flash*) devicedock-flash idf.py "$@" ;; *) command idf.py "$@" ;; esac; }'
+fi

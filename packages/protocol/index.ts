@@ -83,6 +83,15 @@ export const request = z.discriminatedUnion("op", [
     op: z.literal("probe.transfer"),
     args: z.object({ data: dapPacket }).strict(),
   }),
+  // Flash sessions (serial devices): `flash.open` is approved once, with an optional purpose the agent states (shown to
+  // the human as the agent's words, never trusted). Inside the session writes, control lines and line settings need no
+  // further approval, until it is idle for FLASH_IDLE_MS, reaches FLASH_MAX_MS, is closed, or the owner cuts it off.
+  z.object({
+    ...common,
+    op: z.literal("flash.open"),
+    args: z.object({ purpose: z.string().max(200).optional() }).strict(),
+  }),
+  z.object({ ...common, op: z.literal("flash.close"), args: z.object({}).strict() }),
   z.object({
     ...common,
     op: z.literal("serial.read"),
@@ -94,6 +103,12 @@ export const request = z.discriminatedUnion("op", [
   }),
 ]);
 export type Request = z.infer<typeof request>;
+/** A flash session ends after this long without a write, signal or line change... */
+export const FLASH_IDLE_MS = 2 * 60 * 1000;
+/** ...and after this long at the latest, however busy it is. */
+export const FLASH_MAX_MS = 15 * 60 * 1000;
+/** Operations a flash session covers: everything esptool does to a port, except closing it (that ends the share). */
+export const FLASH_OPS: readonly string[] = ["serial.write", "serial.signals", "serial.configure", "serial.connect"];
 /**
  * What a device IS decides the safety policy; how it is implemented does not.
  *  - "serial": real hardware behind a browser-granted port (approvals, hardware warning, auto-share memory).
@@ -171,6 +186,8 @@ export const browserMessage = z.discriminatedUnion("type", [
   }),
   // The owner cuts off an active debug-probe session from the page.
   z.object({ type: z.literal("probe-end"), deviceId: id }),
+  // The owner cuts off an active flash session from the page.
+  z.object({ type: z.literal("flash-end"), deviceId: id }),
   z.object({ type: z.literal("approve"), id, allow: z.boolean() }),
   z.object({ type: z.literal("rpc"), request }),
 ]);

@@ -99,7 +99,13 @@ export class ProbeAdapter implements DeviceAdapter {
     return this.register({ transport: "hid", hid, name: hid.productName || `HID ${hid.vendorId.toString(16)}:${hid.productId.toString(16)}` });
   }
   private register(p: { transport: "usb" | "hid"; usb?: UsbDevice; hid?: HidDevice; name: string }): Descriptor {
-    const descriptor: Descriptor = { id: crypto.randomUUID(), name: `${p.name} (debug probe, ${p.transport === "usb" ? "WebUSB" : "WebHID"})`, kind: "probe" };
+    const dev = p.usb ?? p.hid!;
+    const descriptor: Descriptor = {
+      id: crypto.randomUUID(),
+      name: `${p.name} (debug probe, ${p.transport === "usb" ? "WebUSB" : "WebHID"})`,
+      kind: "probe",
+      usb: { vendorId: dev.vendorId, productId: dev.productId },
+    };
     this.devices.set(descriptor.id, { descriptor, transport: p.transport, usb: p.usb, hid: p.hid, reportSize: 64, handlers: new Set(), busy: Promise.resolve() });
     return descriptor;
   }

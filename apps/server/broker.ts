@@ -4,6 +4,9 @@ import {
   MAX_BUFFER,
   MAX_PENDING,
   MAX_AUTONOMY_MS,
+  FLASH_IDLE_MS,
+  FLASH_MAX_MS,
+  FLASH_OPS,
   isPhysical,
   isVirtual,
   type Request,
@@ -19,6 +22,8 @@ type Device = DeviceDescriptor & {
   busy: boolean;
   /** Debug probes: the approved session, ended by idle time, probe.close, the owner's cut-off or a revoke. */
   probeSession?: { until: number };
+  /** Serial devices: an approved flash session, ended by idle time, its hard end, flash.close, the owner or a revoke. */
+  flashSession?: { idle: number; end: number };
 };
 /** A probe session lapses after this long without a transfer (OpenOCD runs come and go within one session). */
 export const PROBE_IDLE_MS = 10 * 60 * 1000;
@@ -132,6 +137,24 @@ export class Broker {
     const d = this.devices.get(id);
     if (d && d.owner === owner) this.endProbeSession(d);
   }
+  /** Whether a flash session is running; one that ran out is ended here (and the page told). */
+  private flashLive(d: Device) {
+    if (!d.flashSession) return false;
+    const now = this.now();
+    if (d.flashSession.idle > now && d.flashSession.end > now) return true;
+    this.endFlashSession(d);
+    return false;
+  }
+  private endFlashSession(d: Device) {
+    if (!d.flashSession) return;
+    d.flashSession = undefined;
+    d.send({ type: "flash-session", deviceId: d.id, active: false });
+  }
+  /** The owner cut the flash session off in the page; writes ask again from now on. */
+  endFlash(owner: string, id: string) {
+    const d = this.devices.get(id);
+    if (d && d.owner === owner) this.endFlashSession(d);
+  }
   approve(owner: string, id: string, allow: boolean) {
     const p = this.pending.get(id);
     if (!p || p.stage !== "approval" || p.device.owner !== owner) return;
@@ -175,7 +198,7 @@ export class Broker {
     this.seen.set(r.id, r.deadline);
     if (r.op === "devices.list")
       return [...this.devices.values()].map(
-        ({ id, name, kind, engine, board, generation, baudRate, autonomousUntil }) => ({
+        ({ id, name, kind, engine, board, generation, baudRate, autonomousUntil, flashSession }) => ({
           id,
           name,
           kind,
@@ -186,6 +209,9 @@ export class Broker {
           generation,
           baudRate,
           autonomous: !!autonomousUntil && autonomousUntil > now,
+          ...(kind === "serial"
+            ? { flashSession: !!flashSession && flashSession.idle > now && flashSession.end > now }
+            : {}),
         }),
       );
     const d = this.devices.get(r.deviceId ?? "");
@@ -233,6 +259,23 @@ export class Broker {
       d.probeSession!.until = now + PROBE_IDLE_MS;
       return { session: "active" };
     }
+    // Flash sessions: one approval covers the writes, control lines and line settings of one flash.
+    if (r.op === "flash.close") {
+      this.endFlashSession(d);
+      return {};
+    }
+    const flashing = this.flashLive(d);
+    if (r.op === "flash.open") {
+      if (flashing) {
+        d.flashSession!.idle = now + FLASH_IDLE_MS;
+        return { session: "active" };
+      }
+      if (this.autonomous(d)) return { session: "not needed" };
+    }
+    if (flashing && FLASH_OPS.includes(r.op)) {
+      d.flashSession!.idle = now + FLASH_IDLE_MS;
+      quiet = true;
+    }
     d.lease.expires = now + this.leaseMs;
     if (r.op === "serial.read") {
       if (d.overflow) {
@@ -248,7 +291,8 @@ export class Broker {
     d.busy = true;
     try {
       const data = await new Promise<string | undefined>((resolve, reject) => {
-        // Approval is per operation, except DAP transfers: those were covered by approving the session.
+        // Approval is per operation, except inside a session: DAP transfers and flash-session writes were covered
+        // by approving the session.
         const approval = source === "agent" && !quiet && !this.autonomous(d);
         const timer = setTimeout(
           () =>
@@ -275,6 +319,12 @@ export class Broker {
       if (r.op === "probe.open") {
         d.probeSession = { until: this.now() + PROBE_IDLE_MS };
         d.send({ type: "probe-session", deviceId: d.id, active: true });
+        return { session: "opened" };
+      }
+      if (r.op === "flash.open") {
+        const t = this.now();
+        d.flashSession = { idle: t + FLASH_IDLE_MS, end: t + FLASH_MAX_MS };
+        d.send({ type: "flash-session", deviceId: d.id, active: true, until: t + FLASH_MAX_MS });
         return { session: "opened" };
       }
       if (r.op === "serial.disconnect") this.revoke(d.owner, d.id);

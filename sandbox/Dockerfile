@@ -57,8 +57,10 @@ RUN echo 'export PATH="/opt/venv/bin:$PATH:/home/node/.devicedock/agents/bin"' >
 COPY packages ./packages
 COPY sandbox ./sandbox
 COPY --from=devicedock-rs /out/devicedock /opt/devicedock/bin/devicedock
-# esptool checks first that a shared real board is in autonomous mode (see sandbox/esptool-preflight.py).
-RUN for f in esptool esptool.py; do install -m 755 /opt/devicedock/sandbox/esptool-preflight.py /opt/venv/bin/$f; done
+# esptool on a shared real board first asks the human for one flash session (see sandbox/esptool-preflight.py);
+# devicedock-flash does the same around any flashing command (idf.py flash, see profile-idf.sh).
+RUN for f in esptool esptool.py; do install -m 755 /opt/devicedock/sandbox/esptool-preflight.py /opt/venv/bin/$f; done \
+ && install -m 755 /opt/devicedock/sandbox/esptool-preflight.py /usr/local/bin/devicedock-flash
 # claude, codex and opencode start through one wrapper that keeps them in the home volume, where they can update.
 RUN install -m 755 /opt/devicedock/sandbox/agent-wrapper.sh /usr/local/bin/devicedock-agent \
  && for b in claude codex opencode; do ln -s devicedock-agent /usr/local/bin/$b; done \
