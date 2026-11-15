@@ -149,8 +149,8 @@ openocd -c "<the probe's openocd line from device list>" \
         -f /opt/contiki-ng/arch/platform/nrf/nrf54l15/xiao/support/openocd.cfg \
         -c "init; nrf54l-reset-halt; nrf54l-load $F; nrf54l-reset-halt; verify_image $F; nrf54l-run; shutdown"
 ```
-- Build fails with `expected ')' before 'PRIx64'`: a toolchain bug (fixed upstream in contiki-ng#3305, not yet in
-  this image). Add `CFLAGS += -include $(CURDIR)/fix.h` to your Makefile, with `fix.h` containing
+- Build fails with `expected ')' before 'PRIx64'`: a toolchain bug (contiki-ng#3305 fixes it upstream; until that
+  is in this image). Add `CFLAGS += -include $(CURDIR)/fix.h` to your Makefile, with `fix.h` containing
   `#ifndef __ASSEMBLER__` / `#include <sys/types.h>` / `#endif`.
 - About 12 KiB/s: a 105 KB image flashes and verifies in ~10 s. `verify_image` is silent on success.
 - No console output (e.g. after halting the chip with a debugger): reset and run,
