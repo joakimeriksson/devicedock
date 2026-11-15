@@ -84,9 +84,10 @@ const mock = new MockAdapter(),
 function App() {
   // In-page confirmation. Native window.confirm() can be auto-dismissed by browser extensions (automation tools close
   // dialogs) or suppressed for the page ("prevent additional dialogs"), which silently cancelled every share.
-  const [pendingConfirm, setPendingConfirm] = useState<{ message: string; resolve: (ok: boolean) => void }>();
-  const confirmInPage = (message: string) =>
-    new Promise<boolean>((resolve) => setPendingConfirm({ message, resolve }));
+  type Confirm = { message: string; title?: string; yes?: string; no?: string };
+  const [pendingConfirm, setPendingConfirm] = useState<Confirm & { resolve: (ok: boolean) => void }>();
+  const confirmInPage = (message: string, words: Omit<Confirm, "message"> = {}) =>
+    new Promise<boolean>((resolve) => setPendingConfirm({ message, ...words, resolve }));
   const answerConfirm = (ok: boolean) => {
     pendingConfirm?.resolve(ok);
     setPendingConfirm(undefined);
@@ -644,11 +645,18 @@ function App() {
       giveUp(id, `came back but could not be reopened: ${(e as Error).message}`);
     }
   }
+  /** A board picked in the browser's chooser is one the human means to use: ask straight away whether to share it. */
+  async function addAndShare(adapter: DeviceAdapter, descriptor: Descriptor) {
+    await add(adapter, descriptor);
+    const row = rowsRef.current.find((r) => r.id === descriptor.id);
+    if (row && !row.exposed && !row.unplugged) await expose(row);
+  }
   async function expose(row: Row, auto?: { baudRate: number }) {
     if (
       row.kind === "probe" &&
       !(await confirmInPage(
-        "Sharing a debug probe gives container programs (OpenOCD, GDB) full control of the attached chip: they can halt it, read and erase its flash, and change protection settings, which can lock a part permanently. Each OpenOCD session will need your approval (or autonomous mode). Debug probes are never shared automatically. Share this probe?",
+        "Programs in the sandbox (OpenOCD, GDB) get full control of the attached chip: they can halt it, read and erase its flash, and change protection settings, which can lock a part permanently. Each debug session needs your approval (or autonomous mode). Debug probes are never shared automatically.",
+        { title: `Share ${row.name} with the sandbox?`, yes: "Share probe", no: "Not now" },
       ))
     )
       return;
@@ -656,7 +664,8 @@ function App() {
       !auto &&
       row.kind === "serial" &&
       !(await confirmInPage(
-        "Sharing lets container programs request arbitrary serial bytes, which may change hardware state. Each agent operation will require your approval. It will be shared again automatically after restarts (untick “Auto-share next time” to stop). Open and share this port?",
+        "Programs in the sandbox can then send it any bytes and toggle its reset lines, which may change hardware state. Each write asks for your approval. It is shared again automatically after restarts (untick “Auto-share next time” to stop).",
+        { title: `Share ${row.name} with the sandbox?`, yes: "Open & share", no: "Not now" },
       ))
     )
       return;
@@ -692,7 +701,8 @@ function App() {
     if (
       minutes !== null &&
       !(await confirmInPage(
-        `Autonomous mode lets agents in the sandbox write to, reset and flash this device WITHOUT asking you, for ${minutes} minutes. Anything wired to the board may be affected. Turn it on?`,
+        `Agents in the sandbox can then write to, reset and flash ${row.name} WITHOUT asking you, for ${minutes} minutes. Anything wired to the board may be affected.`,
+        { title: `Autonomous mode for ${minutes} minutes?`, yes: "Turn on", no: "Cancel" },
       ))
     )
       return false;
@@ -738,11 +748,12 @@ function App() {
       {pendingConfirm && (
         <div className="confirm-backdrop" role="dialog" aria-modal="true">
           <div className="confirm-box">
+            {pendingConfirm.title && <h3>{pendingConfirm.title}</h3>}
             <p>{pendingConfirm.message}</p>
             <div className="confirm-actions">
-              <button onClick={() => answerConfirm(false)}>Cancel</button>
+              <button onClick={() => answerConfirm(false)}>{pendingConfirm.no ?? "Cancel"}</button>
               <button className="primary" autoFocus onClick={() => answerConfirm(true)}>
-                OK
+                {pendingConfirm.yes ?? "OK"}
               </button>
             </div>
           </div>
@@ -860,21 +871,21 @@ function App() {
                 <button
                   className="primary"
                   disabled={!connected || !("serial" in navigator)}
-                  onClick={() => run(() => add(serial))}
+                  onClick={() => run(async () => addAndShare(serial, await serial.requestDevice()))}
                 >
                   ＋ Add serial port
                 </button>
                 <button
                   disabled={!connected || !probes.supported.usb}
                   title="CMSIS-DAP v2 debug probe over WebUSB (e.g. a TI LaunchPad's XDS110)"
-                  onClick={() => run(async () => add(probes, await probes.requestUsb()))}
+                  onClick={() => run(async () => addAndShare(probes, await probes.requestUsb()))}
                 >
                   ＋ Add debug probe
                 </button>
                 <button
                   disabled={!connected || !probes.supported.hid}
                   title="CMSIS-DAP v1 debug probe over WebHID (e.g. the SAMD11 on a XIAO nRF54L15)"
-                  onClick={() => run(async () => add(probes, await probes.requestHid()))}
+                  onClick={() => run(async () => addAndShare(probes, await probes.requestHid()))}
                 >
                   Probe (HID)
                 </button>
@@ -996,7 +1007,7 @@ function App() {
                         title="The same board's serial ports: the console of the chip this probe debugs"
                         onClick={() =>
                           run(async () =>
-                            add(
+                            addAndShare(
                               serial,
                               await serial.requestDevice([
                                 { usbVendorId: row.usb!.vendorId, usbProductId: row.usb!.productId },
