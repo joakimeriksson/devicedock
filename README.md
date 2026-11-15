@@ -11,6 +11,8 @@ and a worked example that flashes Contiki-NG onto a TI LaunchPad through the bro
 - ESP32 over a shared serial port: esptool enters the bootloader through the bridge (ESP32-D0WDQ6-V3, 2026-11-07).
 - TI LaunchPad (CC1352R1) through its XDS110 debug probe over WebUSB: OpenOCD in the sandbox reads, flashes and
   verifies the chip, and the firmware's serial output reaches the sandbox (2026-11-09). About 3 KiB/s.
+- Seeed XIAO nRF54L15 through its CMSIS-DAP probe over WebHID: Contiki-NG hello-world built in the sandbox, flashed
+  and verified with OpenOCD, its output read over the board's serial port (2026-11-15). About 12 KiB/s.
 - Simulated ESP32 boards (esp32sim) as ordinary devices.
 
 Agents in the sandbox get their instructions from [sandbox/AGENTS.md](sandbox/AGENTS.md) (copied to `/workspace`).
