@@ -211,7 +211,7 @@ console_status() {
   if docker info >/dev/null 2>&1; then
     if sandbox_running; then printf 'sandbox  : \033[32mrunning\033[0m  %s image, %s\n' "$(docker exec $CONTAINER cat /etc/devicedock-variant 2>/dev/null || echo older)" "$(image_state)"
       if [ "$(docker inspect -f '{{index .Config.Labels "devicedock.network"}}' $CONTAINER 2>/dev/null)" = tunnel ]; then
-        printf 'network  : \033[32mfirewall on\033[0m  (allowed sites only; Network panel in the page)\n'
+        printf 'network  : \033[32mfirewall on\033[0m  (allowed sites only; Settings → Internet in the page)\n'
       else printf 'network  : \033[33mopen internet\033[0m  (older sandbox: u upgrades it)\n'; fi
       echo "devices  :"; docker exec $CONTAINER device list 2>&1 | sed 's/^/  /' | head -20
       local shares; shares=$(docker inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}} -> {{.Destination}}{{if not .RW}} (read-only){{end}}{{"\n"}}{{end}}{{end}}' $CONTAINER 2>/dev/null | sed '/^$/d' || true)

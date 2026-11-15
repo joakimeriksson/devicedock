@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 // Folders from this computer shared into the sandbox at /shares/<name> (Rust backend only; see server-rs/src/shares.rs).
 type Share = { path: string; display: string; readonly: boolean; target: string; problem?: string };
-type View = { shares: Share[]; container: boolean; pending: boolean; error?: string };
+export type SharesView = { shares: Share[]; container: boolean; pending: boolean; error?: string };
+type View = SharesView;
 type Dir = { name: string; path: string };
 type Listing = {
   path: string;
@@ -14,28 +15,12 @@ type Listing = {
   reason?: string;
 };
 
-export function Shares({ csrf }: { csrf: string }) {
-  const [view, setView] = useState<View | null>(null);
+export function Shares({ csrf, view, setView }: { csrf: string; view: View | null; setView: (v: View) => void }) {
   const [error, setError] = useState("");
   const [picker, setPicker] = useState<Listing | null>(null);
   const [typed, setTyped] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    const poll = () =>
-      fetch("/api/shares")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((v) => alive && v && setView(v))
-        .catch(() => {});
-    void poll();
-    const t = setInterval(poll, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
 
   async function post<T>(path: string, body: unknown): Promise<T | null> {
     setError("");
@@ -82,7 +67,7 @@ export function Shares({ csrf }: { csrf: string }) {
   }
 
   return (
-    <section className="panel network shares">
+    <section className="panel network shares" id="folders">
       <header>
         <span>
           Shared folders <small>{view.shares.length ? `${view.shares.length} from this computer` : "none"}</small>

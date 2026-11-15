@@ -12,8 +12,11 @@ import {
   type DeviceAdapter,
 } from "./adapters";
 import { Terminal, type TerminalKind } from "./Terminal";
-import { Network } from "./Network";
-import { Shares } from "./Shares";
+import { FirewallAsks, type FirewallView } from "./Network";
+import type { SharesView } from "./Shares";
+import { Settings } from "./Settings";
+import { Summary } from "./Summary";
+import { usePoll } from "./access";
 import { useTheme, type ThemePref } from "./theme";
 import "./sim/engines";
 import { SimAdapter } from "./sim/SimAdapter";
@@ -95,6 +98,24 @@ function App() {
     [remembered, setRememberedState] = useState(loadRemembered),
     [simProfiles, setSimProfiles] = useState<SimProfile[]>([]);
   const themeCtl = useTheme();
+  // Two pages in one: the workspace (terminals, boards) and settings (internet, folders, agent updates). The workspace
+  // stays mounted while settings are open, so terminals and shared boards keep running.
+  const pageOf = () => (location.hash.startsWith("#settings") ? "settings" : "work");
+  const [page, setPage] = useState<"work" | "settings">(pageOf);
+  useEffect(() => {
+    const onHash = () => setPage(pageOf());
+    addEventListener("hashchange", onHash);
+    return () => removeEventListener("hashchange", onHash);
+  }, []);
+  function go(where: string) {
+    const settings = where !== "devices";
+    location.hash = settings ? `#settings-${where}` : "#workspace";
+    setPage(settings ? "settings" : "work");
+    setTimeout(() => document.getElementById(where)?.scrollIntoView({ block: "start" }), 50);
+  }
+  // Polled here, not in the panels: the summary and the firewall's questions need them on both pages.
+  const [firewall, setFirewall] = usePoll<FirewallView>("/api/firewall", 1500, !!csrf);
+  const [shares, setShares] = usePoll<SharesView>("/api/shares", 5000, !!csrf);
   const rememberedRef = useRef(remembered),
     autoShareRef = useRef<() => Promise<void>>(async () => {}),
     autoSharing = useRef(false);
@@ -576,7 +597,15 @@ function App() {
         <div className="brand">
           <span className="logo">↔</span>
           <b>DeviceDock</b>
-          <span className="tag">LOCAL WORKSPACE</span>
+          <nav className="pages" aria-label="Pages">
+            <a href="#workspace" aria-current={page === "work" ? "page" : undefined}>
+              Workspace
+            </a>
+            <a href="#settings" aria-current={page === "settings" ? "page" : undefined}>
+              Settings
+              {(shares?.pending || firewall?.state === "open") && <i className="dot muted" aria-label="needs a look" />}
+            </a>
+          </nav>
         </div>
         <div className="topbar-right">
           <div className="theme-switch" role="group" aria-label="Colour theme">
@@ -597,13 +626,30 @@ function App() {
               </button>
             ))}
           </div>
-          <span className={connected ? "status online" : "status"}>
+          <span className={connected ? "status online" : "status"} title={connected ? "Browser bridge online" : "Bridge offline"}>
             <i className="dot" />
-            {connected ? "Browser bridge online" : "Bridge offline"}
+            <span className="status-text">{connected ? "Browser bridge online" : "Bridge offline"}</span>
           </span>
         </div>
       </header>
       <main>
+        {error && (
+          <div className="error" role="alert">
+            {error}
+            <button onClick={() => setError("")}>Dismiss</button>
+          </div>
+        )}
+        {page === "settings" && csrf && (
+          <Settings
+            csrf={csrf}
+            health={health}
+            firewall={firewall}
+            setFirewall={setFirewall}
+            shares={shares}
+            setShares={setShares}
+          />
+        )}
+        <div hidden={page === "settings" && !!csrf}>
         <div className="intro">
           <h1>Your AI agent, sandboxed, on your real hardware.</h1>
           <p>
@@ -611,36 +657,24 @@ function App() {
             allow. Every write to a board waits for your OK.
           </p>
         </div>
-        <div className="summary">
-          <span>
-            <i className={health?.docker ? "dot" : "dot muted"} />
-            Docker <b>{health?.docker ? "available" : "unavailable"}</b>
-          </span>
-          <span>
-            Sandbox <b>{health?.container ? "running" : "not running"}</b>
-          </span>
-          <span>
-            Agents <b>{health?.agent ? "Codex · Claude · OpenCode" : "not available"}</b>
-          </span>
-          <span>
-            WebSerial{" "}
-            <b>{"serial" in navigator ? "supported" : "use Chrome / Edge"}</b>
-          </span>
-        </div>
-        {error && (
-          <div className="error" role="alert">
-            {error}
-            <button onClick={() => setError("")}>Dismiss</button>
-          </div>
-        )}
+        <Summary
+          health={health}
+          boards={{
+            shared: rows.filter((r) => r.exposed).length,
+            autonomous: rows.filter((r) => r.exposed && r.autonomousUntil && r.autonomousUntil > now).length,
+          }}
+          firewall={firewall}
+          shares={shares}
+          go={go}
+        />
         {health?.error && (
           <details className="notice">
             <summary>Sandbox needs attention</summary>
             <pre>{health.error}</pre>
             <p>
-              Run <code>npm run sandbox:build</code>, then{" "}
-              <code>npm run sandbox:start</code> from a terminal with Docker
-              access.
+              If the sandbox was just recreated, this clears in a few seconds. Otherwise, in the DeviceDock console:{" "}
+              <code>rs</code> recreates the sandbox and <code>u</code> upgrades it (<code>./devicedock.sh status</code>{" "}
+              shows what is wrong).
             </p>
           </details>
         )}
@@ -659,7 +693,7 @@ function App() {
             )}
           </div>
           <aside>
-            <section className="panel devices">
+            <section className="panel devices" id="devices">
               <header>
                 <span>
                   Devices <small>{rows.length} attached</small>
@@ -1028,15 +1062,15 @@ function App() {
                 </small>
               </div>
             </section>
-            {csrf && <Network csrf={csrf} />}
-            {csrf && <Shares csrf={csrf} />}
           </aside>
         </div>
         <footer>
           Loopback only · Browser permission + explicit sharing · No host device
           mounts
         </footer>
+        </div>
       </main>
+      {csrf && <FirewallAsks csrf={csrf} view={firewall} setView={setFirewall} />}
       {rows.some((r) => r.probeSession && r.exposed) && (
         <div className="probe-banner" role="status">
           {rows

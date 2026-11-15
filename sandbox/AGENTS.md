@@ -177,7 +177,7 @@ automatically. The human decides in the DeviceDock page which hosts are allowed:
   message.
 - When something fails with that message, or with a DNS error (`EAI_AGAIN`, "Could not resolve host"), do not
   retry in a loop or look for another way out: tell the human which host you need and why, and ask them to allow it
-  (Network panel). Tools that ignore `HTTPS_PROXY` (plain Node `fetch`, raw sockets, `git@` SSH URLs) cannot reach
+  (Settings → Internet in the page). Tools that ignore `HTTPS_PROXY` (plain Node `fetch`, raw sockets, `git@` SSH URLs) cannot reach
   the internet at all; use the HTTPS URL or a proxy-aware tool.
 - IP addresses are never allowed, and neither are names that point to private or local addresses.
 - Do not stop or replace `devicedock tunnel`: it is also how the human's boards reach you.
@@ -189,7 +189,7 @@ The human can share project folders from their computer in the DeviceDock page. 
   to make it read-write.
 - Your changes there land directly on the human's computer. Keep them to what the task needs, do not touch
   `.git/hooks`, CI files or build scripts unless asked, and say which files you changed.
-- You cannot add or remove shares; ask the human (Shared folders panel). Adding one restarts this sandbox.
+- You cannot add or remove shares; ask the human (Settings → Shared folders in the page). Adding one restarts this sandbox.
 
 ## 10. The loop
 1. Write or change code in `/workspace`; build it (PlatformIO, arduino-cli, or MicroPython files).
