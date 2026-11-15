@@ -605,9 +605,11 @@ function App() {
       </header>
       <main>
         <div className="intro">
-          <div className="eyebrow">HARDWARE IN THE LOOP</div>
-          <h1>Your code. Real devices.</h1>
-          <p>A Linux sandbox connected to the hardware you choose to share.</p>
+          <h1>Your AI agent, sandboxed, on your real hardware.</h1>
+          <p>
+            It never sees your home folder, passwords, keys or local network: only the boards, folders and sites you
+            allow. Every write to a board waits for your OK.
+          </p>
         </div>
         <div className="summary">
           <span>
