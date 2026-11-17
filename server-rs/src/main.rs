@@ -8,7 +8,7 @@
 //!   bridge                     the bridge service, RFC 2217 and OpenOCD endpoints: the container's main process
 //!   device <cmd> ...           the `device` CLI (/usr/local/bin/device runs this)
 //!   mcp                        the stdio MCP server with the device tools
-//! Files live in ./.runtime and ./dist relative to the working directory.
+//! Files live in ./.runtime relative to the working directory; a source checkout's ./apps/web is served from disk.
 mod app;
 mod bridge;
 mod broker;

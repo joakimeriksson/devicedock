@@ -1,6 +1,6 @@
 # DeviceDock
 
-A local browser workspace that connects an isolated Linux coding sandbox to browser-owned serial ports. React and xterm.js provide two real Docker terminals; WebSerial and a browser mock share one device protocol, lease manager, and human approval path.
+A local browser workspace that connects an isolated Linux coding sandbox to browser-owned serial ports. Preact and xterm.js provide two real Docker terminals; WebSerial and a browser mock share one device protocol, lease manager, and human approval path.
 
 ![DeviceDock: shared devices on the left, the agent and Linux terminals on the right](docs/screenshot.png)
 
@@ -72,11 +72,12 @@ devicedock device <command> ...      # the `device` CLI (/usr/local/bin/device r
 devicedock mcp                       # the stdio MCP server
 ```
 
-Node is only needed to *develop* the web UI (see "Developing the web UI" below). Tests: `cargo test --manifest-path server-rs/Cargo.toml`
+The web UI needs no build either (see "Developing the web UI" below). Tests: `cargo test --manifest-path server-rs/Cargo.toml`
 (unit tests, plus `server-rs/tests`: the binary driven over HTTP and WebSockets, and the sandbox side end to end on test
-ports), `tests/rfc2217/run.sh` (real pyserial against the bridge, in a throwaway container from the sandbox image) and
-`node tests/rust/browser-smoke.mjs` (headless Chrome: login, share the mock, PING → PONG). CI
-(`.github/workflows/backend.yml`) builds macOS and static Linux binaries; a `v*` tag publishes them as a release.
+ports), `tests/rfc2217/run.sh` (real pyserial against the bridge, in a throwaway container from the sandbox image), and
+with [Deno](https://deno.com) `deno test` (the page's logic) and `deno test --allow-all tests/browser/` (headless
+Chrome: login, share the mock, PING → PONG, shared folders). CI (`.github/workflows/backend.yml`) builds macOS and
+static Linux binaries; a `v*` tag publishes them as a release.
 
 ## Network firewall
 
@@ -135,16 +136,22 @@ recreates it. Files in `/workspace` and your agent logins are kept (they are vol
 
 ## Developing the web UI
 
-The page (`apps/web`, TypeScript and React) is built with Vite, so changing it needs Node 22.12+ and npm. Use `npm ci`
-(the lockfile is versioned):
+The page (`apps/web`) is plain JavaScript modules that the browser loads as they are: Preact with htm templates
+instead of JSX, and xterm.js, all vendored in `apps/web/vendor/` (see its README). There is no build step and no
+Node: edit a file and reload the page. A backend started in a source checkout (`./devicedock.sh`) serves
+`./apps/web` from disk; a release binary has a copy embedded.
+
+Tests use [Deno](https://deno.com):
 
 ```sh
-npm ci && npm run typecheck && npm test
-npm run build        # writes ./dist; the backend serves ./dist when it exists, else its embedded copy
+deno test                                # the page's logic (tests/web): USB names, approvals, simulators, probes
+deno test --allow-all tests/browser/     # headless Chrome against a backend of their own
 ```
 
-Then reload the page (in the console: `w` rebuilds). `npm run test:browser` runs the Playwright test against its own
-backend on another port, so it never touches a running DeviceDock.
+The browser tests start their own backend on ports 47941 and 47943, in a scratch folder with `DEVICEDOCK_TEST=1` and
+Docker out of reach, so they never touch a running DeviceDock. They build the debug binary with cargo first;
+`DEVICEDOCK_BIN=path/to/devicedock` tests that binary instead (CI uses the release build, with its embedded page).
+`deno run --allow-all scripts/screenshot.js [--dark]` retakes `docs/screenshot.png` from a running DeviceDock.
 
 Login links (from `./devicedock.sh` → `o` or `devicedock open`) open `http://127.0.0.1:47831` with a one-time token in
 the fragment. It is removed immediately, exchanged for an HttpOnly SameSite=Strict session cookie, and never logged.
@@ -169,7 +176,7 @@ Use this exact host, not `localhost`. `PORT` changes the browser port.
 5. Share again, simulate unplug, and share once more. Each sharing creates a new generation and requires a new lease.
 6. The agent terminal launches the actual Linux `codex` binary. Until login succeeds it may display authentication/setup prompts; this is not an authenticated agent response.
 
-A UI-only mock test is available with `npm run test:browser` (installed Chrome required). This test does **not** demonstrate the Docker path; perform the steps above separately.
+A UI-only mock test is available with `deno test --allow-all tests/browser/` (installed Chrome, or Astral downloads one). This test does **not** demonstrate the Docker path; perform the steps above separately.
 
 ## Agent login (inside the sandbox)
 
@@ -280,7 +287,6 @@ To deliberately erase stored agent credentials and the container home, first rem
 ## Troubleshooting and limitations
 
 - **Colima socket permission denied:** access is blocked for the calling process. This does not prove Colima is stopped. Check `docker info` in your normal terminal before changing runtime configuration.
-- **Registry DNS failure:** `npm install` requires registry access; an incomplete local cache cannot provide a clean installation.
 - **Loopback EPERM:** the calling execution sandbox does not allow listening. Run from an environment permitted to bind localhost.
 - **Agent unavailable:** build/start the image, inspect `docker logs devicedock-sandbox`, and run `codex --version` inside it. CLI installation is separate from authentication.
 - **Port already open:** close other serial monitors/tabs. Browser/OS port ownership prevents simultaneous opens. USB vendor/product IDs are labels, never physical identity keys.
@@ -327,7 +333,7 @@ first paint (an external file because the CSP forbids inline scripts).
 ## Simulated devices
 A simulated board appears as a normal device (kind `sim`, labelled `simulated` in `device list`). The first engine is
 esp32sim (WebAssembly): `tools/sim/install-esp32sim.sh /path/to/esp32sim` installs a built copy and a T-Display
-profile, then `npm run build`; the page offers **＋ Simulated ttgo-tdisplay**.
+profile; after a reload the page offers **＋ Simulated ttgo-tdisplay**.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how to add another simulator and for the current limits.
 
 ## License

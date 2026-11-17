@@ -26,15 +26,15 @@ Nothing in the broker, bridge, CLI, MCP server or RFC 2217 server knows how a de
 
 | You want to… | Implement | Touches |
 | --- | --- | --- |
-| add a **simulator/emulator that runs in the browser** | `SimEngine` (`apps/web/src/sim/types.ts`) + a profile | one engine file, one registration line, one profile |
-| add a **new real transport** (WebUSB, WebHID, Bluetooth serial) | `DeviceAdapter` (`apps/web/src/adapters.ts`) | one adapter; kind stays `serial` (physical) |
-| add another **debug-probe transport** | `ProbeAdapter` (`apps/web/src/probe.ts`) | kind `probe` (physical); see 4.1 |
+| add a **simulator/emulator that runs in the browser** | `SimEngine` (`apps/web/src/sim/types.js`) + a profile | one engine file, one registration line, one profile |
+| add a **new real transport** (WebUSB, WebHID, Bluetooth serial) | `DeviceAdapter` (`apps/web/src/adapters.js`) | one adapter; kind stays `serial` (physical) |
+| add another **debug-probe transport** | `ProbeAdapter` (`apps/web/src/probe.js`) | kind `probe` (physical); see 4.1 |
 | add a **simulator that cannot run in the browser** (QEMU, Renode, a native emulator) | a *device provider* (section 6, **not built**) | bridge service / backend |
-| change what agents can do | `packages/protocol` and `server-rs/src/protocol.rs` operations, `server-rs/src/broker.rs` | protocol, broker, `device` CLI / MCP (`server-rs/src/device.rs`, `mcp.rs`) |
+| change what agents can do | `server-rs/src/protocol.rs` operations, `server-rs/src/broker.rs` | protocol, broker, `device` CLI / MCP (`server-rs/src/device.rs`, `mcp.rs`) |
 
 ### 2.1 `DeviceAdapter` (browser): a byte stream plus modem lines
 `listGranted`, `requestDevice`, `open`, `close`, `write`, `setSignals`, `subscribe`. The page drives every
-device through it (`execute()` in `main.tsx` is generic). Real hardware, the loopback mock and every simulator
+device through it (`execute()` in `main.js` is generic). Real hardware, the loopback mock and every simulator
 look identical from here up.
 
 ### 2.2 `SimEngine` (browser): one emulated board
@@ -43,7 +43,7 @@ look identical from here up.
 An engine knows nothing about DeviceDock: no leases, approvals, bridge or protocol.
 `SimAdapter` turns any engine into a `DeviceAdapter` and is the **only** place that decides what the modem
 lines mean for a simulated board (RTS = reset line, DTR = boot-select strap sampled when reset is released:
-the standard ESP auto-reset wiring). `tests/unit/sim.test.ts` proves the adapter against a *fake* engine, so the
+the standard ESP auto-reset wiring). `tests/web/sim.test.js` proves the adapter against a *fake* engine, so the
 layer is verified independently of `esp32sim`.
 
 ### 2.3 Profiles: boards, not code
@@ -52,7 +52,7 @@ and an opaque `engineConfig` that only the engine reads). No profile file means 
 that is not registered is ignored, so a stale profile cannot break the page.
 
 ### 2.4 Device kinds are trust classes, not implementations
-`packages/protocol`: `kind` is `serial` | `probe` | `mock` | `sim`; `isPhysical(kind)` is true for `serial` and `probe`.
+`server-rs/src/protocol.rs` and `apps/web/src/protocol.js`: `kind` is `serial` | `probe` | `mock` | `sim`; `isPhysical(kind)` is true for `serial` and `probe`.
 **All safety policy keys off that predicate**: whether a hardware warning is shown, whether approvals may be
 waived (`autoApprove`), whether a port is remembered and auto-shared. `engine` and `board` are display-only labels.
 `device list` reports `simulated: true` (plus `engine`, `board`) for software devices, so an agent can never mistake
@@ -60,10 +60,10 @@ a simulation for hardware. A new simulator therefore needs **no new kind** and n
 
 ## 3. What is `esp32sim`-specific (exhaustive)
 
-- `apps/web/src/sim/engines/esp32sim.ts`: its worker protocol (`init`, `create`, `load`, `start`, `text`, frames).
+- `apps/web/src/sim/engines/esp32sim.js`: its worker protocol (`init`, `create`, `load`, `start`, `text`, frames).
 - `tools/sim/install-esp32sim.sh`: copies a built esp32sim into `apps/web/public/sim/esp32sim/` and writes the
   profile (git-ignored, about 7 MB).
-- One registration line in `apps/web/src/sim/engines/index.ts`.
+- One registration line in `apps/web/src/sim/engines/index.js`.
 
 Everything else (adapter, UI display panel, broker, bridge, CLI, MCP, RFC 2217) is engine-neutral.
 
@@ -125,9 +125,9 @@ tell them apart), the share is revoked as before.
 
 ## 5. Adding another browser simulator (checklist)
 
-1. Write `apps/web/src/sim/engines/<name>.ts` implementing `SimEngine`; convert its frames to RGBA, name its
+1. Write `apps/web/src/sim/engines/<name>.js` implementing `SimEngine`; convert its frames to RGBA, name its
    consoles, honour `stop()` fully (terminate workers, free memory).
-2. Register it in `engines/index.ts`.
+2. Register it in `engines/index.js`.
 3. Add its board(s) to a profile and an installer under `tools/sim/` (keep binaries out of git).
 4. Test the engine's pure parts (frame conversion, protocol parsing) like `rgb565ToRgba`; the adapter needs no
    new tests.

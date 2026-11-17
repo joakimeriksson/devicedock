@@ -4,7 +4,8 @@
 # The checkout must contain web/wasm/esp32sim.wasm (tools/wasm-build.sh) and, for each bundle, the files its
 # manifest names (tools/fetch-micropython.sh, tools/fetch-rom-elfs.sh web/wasm/fw). Everything is copied to
 # apps/web/public/sim/esp32sim/ (git-ignored: ~8 MB of binaries) and registered in apps/web/public/sim/profiles.json.
-# Then run `npm run build`; the backend serves the result from dist/.
+# Then reload the page: the backend serves apps/web/public/sim/ at /sim/ (a release build embeds what was installed
+# when it was built).
 set -e
 SIM=${1:?usage: install-esp32sim.sh /path/to/esp32sim [bundle ...]}; shift || true
 [ $# -gt 0 ] || set -- tdisplay-prices

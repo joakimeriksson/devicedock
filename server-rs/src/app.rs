@@ -20,9 +20,16 @@ use subtle::ConstantTimeEq;
 use tokio::sync::{mpsc, Notify};
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 
+/// The page (apps/web), as it is in the source tree: it has no build step. Only what the page loads is embedded
+/// (see `web_path`), not its tests or anything else in the folder. `allow_missing`: the sandbox image builds this crate
+/// for `devicedock tunnel` from server-rs alone, without the page.
 #[derive(RustEmbed)]
-#[folder = "$CARGO_MANIFEST_DIR/../dist"]
+#[folder = "$CARGO_MANIFEST_DIR/../apps/web"]
 #[allow_missing = true]
+#[include = "index.html"]
+#[include = "src/**/*"]
+#[include = "vendor/**/*"]
+#[include = "public/**/*"]
 struct Embedded;
 
 pub fn equal(a: &str, b: &str) -> bool {
@@ -53,8 +60,9 @@ pub struct App {
     pub firewall: Arc<crate::firewall::Firewall>,
     terminals: Terminals,
     ws_clients: AtomicUsize,
-    /// Serve the web UI from ./dist when it exists (development), else from the copy embedded at build time.
-    disk_dist: Option<std::path::PathBuf>,
+    /// Serve the page from ./apps/web when it exists (a source checkout: edit a file and reload), else from the copy
+    /// embedded at build time.
+    disk_web: Option<std::path::PathBuf>,
     shutdown: Notify,
     closed: AtomicBool,
 }
@@ -63,7 +71,7 @@ type Shared = Arc<App>;
 
 impl App {
     pub fn new(o: Options) -> Shared {
-        let disk = std::path::Path::new("dist");
+        let disk = std::path::Path::new("apps/web");
         Arc::new(App {
             origin: format!("http://127.0.0.1:{}", o.port),
             host: format!("127.0.0.1:{}", o.port),
@@ -76,7 +84,7 @@ impl App {
             firewall: Arc::new(crate::firewall::Firewall::new()),
             terminals: Terminals::default(),
             ws_clients: AtomicUsize::new(0),
-            disk_dist: disk.join("index.html").is_file().then(|| disk.to_path_buf()),
+            disk_web: disk.join("index.html").is_file().then(|| disk.to_path_buf()),
             shutdown: Notify::new(),
             closed: AtomicBool::new(false),
         })
@@ -332,11 +340,22 @@ fn read_under(dir: &std::path::Path, rel: &str) -> Option<Vec<u8>> {
     std::fs::read(file).ok()
 }
 
+/// Where a page URL lives in apps/web: the page and its modules (index.html, src/, vendor/) where they are, every
+/// other file under public/ (theme-init.js, and the simulators tools/sim installs at /sim/...).
+fn web_path(rel: &str) -> String {
+    if rel == "index.html" || rel.starts_with("src/") || rel.starts_with("vendor/") {
+        rel.to_string()
+    } else {
+        format!("public/{rel}")
+    }
+}
+
 fn static_file(app: &App, path: &str, head: bool) -> Option<Response> {
     let rel = static_rel(path)?;
-    let bytes: Vec<u8> = match &app.disk_dist {
-        Some(dir) => read_under(dir, &rel)?,
-        None => Embedded::get(&rel)?.data.into_owned(),
+    let file = web_path(&rel);
+    let bytes: Vec<u8> = match &app.disk_web {
+        Some(dir) => read_under(dir, &file)?,
+        None => Embedded::get(&file)?.data.into_owned(),
     };
     let mime = mime_guess::from_path(&rel).first_or_octet_stream();
     let ct = if mime.type_() == "text" || mime.essence_str() == "application/javascript" {
@@ -671,22 +690,38 @@ mod tests {
     }
 
     #[test]
+    fn page_urls_map_into_the_web_folder() {
+        assert_eq!(web_path("index.html"), "index.html");
+        assert_eq!(web_path("src/main.js"), "src/main.js");
+        assert_eq!(web_path("vendor/preact/preact.module.js"), "vendor/preact/preact.module.js");
+        assert_eq!(web_path("theme-init.js"), "public/theme-init.js");
+        assert_eq!(web_path("sim/profiles.json"), "public/sim/profiles.json");
+        // Nothing else in apps/web is reachable: not its folders themselves, not public/ twice.
+        assert_eq!(web_path("public/theme-init.js"), "public/public/theme-init.js");
+        assert_eq!(web_path("srcx/main.js"), "public/srcx/main.js");
+        // The embedded copy has the page, its modules and the vendored libraries.
+        for f in ["index.html", "src/main.js", "src/style.css", "vendor/preact/preact.module.js", "vendor/xterm/xterm.mjs", "public/theme-init.js"] {
+            assert!(Embedded::get(f).is_some(), "{f} is not embedded");
+        }
+    }
+
+    #[test]
     fn files_are_read_only_inside_the_web_root() {
         let base = std::env::temp_dir().join(format!("dd-static-{}", random_hex()));
-        std::fs::create_dir_all(base.join("dist/assets")).unwrap();
-        std::fs::write(base.join("dist/index.html"), "page").unwrap();
-        std::fs::write(base.join("dist/assets/app.js"), "js").unwrap();
+        std::fs::create_dir_all(base.join("web/src")).unwrap();
+        std::fs::write(base.join("web/index.html"), "page").unwrap();
+        std::fs::write(base.join("web/src/app.js"), "js").unwrap();
         std::fs::write(base.join("outside.txt"), "secret").unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink(base.join("outside.txt"), base.join("dist/link.txt")).unwrap();
-        let dist = base.join("dist");
-        assert_eq!(read_under(&dist, "index.html").as_deref(), Some(&b"page"[..]));
-        assert_eq!(read_under(&dist, "assets/app.js").as_deref(), Some(&b"js"[..]));
-        assert_eq!(read_under(&dist, "missing.js"), None);
-        assert_eq!(read_under(&dist, &base.join("outside.txt").to_string_lossy()), None);
-        assert_eq!(read_under(&dist, "../outside.txt"), None);
+        std::os::unix::fs::symlink(base.join("outside.txt"), base.join("web/link.txt")).unwrap();
+        let web = base.join("web");
+        assert_eq!(read_under(&web, "index.html").as_deref(), Some(&b"page"[..]));
+        assert_eq!(read_under(&web, "src/app.js").as_deref(), Some(&b"js"[..]));
+        assert_eq!(read_under(&web, "missing.js"), None);
+        assert_eq!(read_under(&web, &base.join("outside.txt").to_string_lossy()), None);
+        assert_eq!(read_under(&web, "../outside.txt"), None);
         #[cfg(unix)]
-        assert_eq!(read_under(&dist, "link.txt"), None);
+        assert_eq!(read_under(&web, "link.txt"), None);
         std::fs::remove_dir_all(base).ok();
     }
 }

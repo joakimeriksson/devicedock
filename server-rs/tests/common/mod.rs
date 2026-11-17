@@ -20,8 +20,8 @@ pub fn scratch(bridge_token: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("dd-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(dir.join(".runtime")).unwrap();
     std::fs::write(dir.join(".runtime/bridge-token"), bridge_token).unwrap();
-    std::fs::create_dir_all(dir.join("dist")).unwrap();
-    std::fs::write(dir.join("dist/index.html"), "<!doctype html><title>dock</title>").unwrap();
+    std::fs::create_dir_all(dir.join("apps/web")).unwrap();
+    std::fs::write(dir.join("apps/web/index.html"), "<!doctype html><title>dock</title>").unwrap();
     dir
 }
 

@@ -1,4 +1,5 @@
-# Builds and tests the Rust backend (server-rs) with the web UI embedded, for macOS and Linux (static musl).
+# Builds and tests the Rust backend (server-rs) with the web UI (apps/web, no build step) embedded, for macOS and Linux
+# (static musl).
 # Pull requests and pushes to main: test + build, binaries kept as workflow artifacts for 14 days.
 # A tag v* additionally publishes them as a GitHub release: devicedock-<target>.tar.gz (the binary and the console
 # script devicedock.sh), SHA256SUMS, and install.sh (which downloads and checks the archive).
@@ -8,9 +9,9 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths: [server-rs/**, apps/web/**, packages/**, tests/**, package.json, package-lock.json, devicedock.sh, install.sh, .github/workflows/backend.yml]
+    paths: [server-rs/**, apps/web/**, tests/**, deno.json, deno.lock, devicedock.sh, install.sh, .github/workflows/backend.yml]
   pull_request:
-    paths: [server-rs/**, apps/web/**, packages/**, tests/**, package.json, package-lock.json, devicedock.sh, install.sh, .github/workflows/backend.yml]
+    paths: [server-rs/**, apps/web/**, tests/**, deno.json, deno.lock, devicedock.sh, install.sh, .github/workflows/backend.yml]
   workflow_dispatch:
 
 permissions:
@@ -29,13 +30,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
-      # The web UI is built first: the release binary embeds dist/.
-      - run: npm ci && npm run build
-      - name: Typecheck and TypeScript tests (web UI)
+      - uses: denoland/setup-deno@v2
         if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: npm run typecheck && npm test
+        with: { deno-version: v2.5.6 }
+      - name: Web UI unit tests (Deno)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: deno test
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: "${{ matrix.target }}" }
       - if: contains(matrix.target, 'musl')
@@ -49,6 +49,9 @@ jobs:
         run: cargo test --manifest-path server-rs/Cargo.toml --target ${{ matrix.target }}
       - name: Build
         run: cargo build --release --manifest-path server-rs/Cargo.toml --target ${{ matrix.target }}
+      - name: Browser tests against the binary's embedded page (headless Chrome)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: DEVICEDOCK_BIN=server-rs/target/${{ matrix.target }}/release/devicedock deno test --allow-all tests/browser/
       - name: Package
         run: |
           mkdir -p out && cp server-rs/target/${{ matrix.target }}/release/devicedock devicedock.sh out/

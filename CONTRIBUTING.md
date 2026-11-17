@@ -7,26 +7,26 @@ self-contained.
 
 ## Set up
 
-You need Docker, Chrome or Edge, [Rust](https://rustup.rs) (stable) and Node.js 22.12+ (only for the web UI and tests).
+You need Docker, Chrome or Edge and [Rust](https://rustup.rs) (stable). For the tests: [Deno](https://deno.com) (the
+web UI's tests) and Node.js 22.12+ (the TypeScript that runs in the sandbox).
 
 ```sh
 git clone https://github.com/joakimeriksson/devicedock && cd devicedock
-npm ci                 # the web UI's build tools and its TypeScript tests
 ./devicedock.sh        # builds the Rust backend, downloads a sandbox image, starts everything
 ```
 
-`w` in the console rebuilds the web UI (the backend serves `./dist` when it exists), `rb` restarts the backend after
-a Rust change, and `i` builds the sandbox image from `sandbox/Dockerfile` (`DEVICEDOCK_VARIANT=base` is the quickest).
+The web UI (`apps/web`) has no build step: edit a file and reload the page (the backend serves `./apps/web` from
+disk). `rb` in the console restarts the backend after a Rust change, and `i` builds the sandbox image from
+`sandbox/Dockerfile` (`DEVICEDOCK_VARIANT=base` is the quickest).
 
 ## Where things are
 
 | Path | What |
 | --- | --- |
 | `server-rs/` | DeviceDock in Rust. On the host: web server, device broker, terminals, sandbox lifecycle, firewall, shared folders. In the sandbox: the bridge service (RFC 2217 and OpenOCD endpoints), the `device` CLI, the MCP server, the tunnel |
-| `apps/web/` | The page (React, xterm.js): device sharing, terminals, Network and Shared folders panels |
-| `packages/` | Protocol types for the page (`server-rs/src/protocol.rs` is the Rust side; keep them in step) |
+| `apps/web/` | The page (plain JavaScript modules: Preact + htm, xterm.js, vendored): device sharing, terminals, Network and Shared folders panels |
 | `sandbox/` | The sandbox image (`Dockerfile`, variants base/contiki/esp32/full), helper scripts, `AGENTS.md` for agents |
-| `tests/` | TypeScript unit tests of the web UI, browser tests, the pyserial RFC 2217 suite (`tests/rfc2217/run.sh`). The Rust tests, including black-box tests of the binary, are in `server-rs/` |
+| `tests/` | Deno tests of the page (`tests/web`) and browser tests (`tests/browser`), the pyserial RFC 2217 suite (`tests/rfc2217/run.sh`). The Rust tests, including black-box tests of the binary, are in `server-rs/` |
 | `docs/` | The project web page (GitHub Pages) |
 
 [ARCHITECTURE.md](ARCHITECTURE.md) explains the layers and how to add a new kind of device or simulator.
@@ -34,7 +34,8 @@ a Rust change, and `i` builds the sandbox image from `sandbox/Dockerfile` (`DEVI
 ## Test before you send
 
 ```sh
-./devicedock.sh test        # cargo test (with the black-box tests of the binary), typecheck, TypeScript tests
+./devicedock.sh test        # cargo test (with the black-box tests of the binary) and deno test
+deno test --allow-all tests/browser/   # the page in headless Chrome, against a backend of its own
 IMAGE=devicedock-sandbox:local tests/rfc2217/run.sh   # real pyserial against the bridge, after changing it
 cargo clippy --manifest-path server-rs/Cargo.toml --all-targets
 ```
