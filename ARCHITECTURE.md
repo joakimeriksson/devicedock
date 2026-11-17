@@ -14,7 +14,7 @@ parts are verified, and marks proposals as proposals.
    │  `device` CLI, MCP tools            device registry, request routing         ├─ MockAdapter       (loopback)
    ▼                                              ▲                               └─ SimAdapter ◄── generic
  bridge service (in container)  ──TCP──► bridge client ◄──WebSocket──►  page            │
-   ├ HTTP /rpc  (device CLI / SDK / MCP)                                                 ▼
+   ├ HTTP /rpc  (device CLI / MCP)                                                       ▼
    └ RFC 2217 server 127.0.0.1:2217                                                  SimEngine  ◄── the second seam
      (what esptool/pyserial connect to)                                              └─ esp32sim engine (WebAssembly)
 ```
@@ -30,7 +30,7 @@ Nothing in the broker, bridge, CLI, MCP server or RFC 2217 server knows how a de
 | add a **new real transport** (WebUSB, WebHID, Bluetooth serial) | `DeviceAdapter` (`apps/web/src/adapters.ts`) | one adapter; kind stays `serial` (physical) |
 | add another **debug-probe transport** | `ProbeAdapter` (`apps/web/src/probe.ts`) | kind `probe` (physical); see 4.1 |
 | add a **simulator that cannot run in the browser** (QEMU, Renode, a native emulator) | a *device provider* (section 6, **not built**) | bridge service / backend |
-| change what agents can do | `packages/protocol` and `server-rs/src/protocol.rs` operations, `server-rs/src/broker.rs` | protocol, broker, SDK |
+| change what agents can do | `packages/protocol` and `server-rs/src/protocol.rs` operations, `server-rs/src/broker.rs` | protocol, broker, `device` CLI / MCP (`server-rs/src/device.rs`, `mcp.rs`) |
 
 ### 2.1 `DeviceAdapter` (browser): a byte stream plus modem lines
 `listGranted`, `requestDevice`, `open`, `close`, `write`, `setSignals`, `subscribe`. The page drives every
@@ -81,7 +81,7 @@ Everything else (adapter, UI display panel, broker, bridge, CLI, MCP, RFC 2217) 
 A CMSIS-DAP debug probe owned by the page: WebUSB for CMSIS-DAP v2 (a vendor bulk interface; the TI XDS110's
 interface 6), WebHID for v1 (HID reports, e.g. the SAMD11 on a XIAO nRF54L15; macOS claims HID interfaces, so
 WebUSB cannot). The page forwards one DAP command packet and returns the response (`probe.transfer`); it does not
-interpret the protocol. In the container, `sandbox/bridge-service/probe.ts` listens on `127.0.0.1:4441` (+N for the
+interpret the protocol. In the container, the bridge (`server-rs/src/dap.rs`) listens on `127.0.0.1:4441` (+N for the
 Nth probe) and speaks the framing of OpenOCD's `cmsis-dap backend tcp` (8-byte little-endian header `"DAP\0"`,
 u16 length, u8 type, u8 reserved), so stock OpenOCD from master drives the probe unchanged.
 
@@ -138,7 +138,7 @@ tell them apart), the share is revoked as before.
 
 QEMU, Renode or a native emulator would run in the sandbox or on the Mac and expose a serial endpoint (pty or TCP).
 Today the broker only knows **browser-owned** devices, so these need a second kind of device source.
-Proposal: a *device provider* interface next to `startRfc2217`'s `Api` (`list`, `call`): a provider registers
+Proposal: a *device provider* next to the bridge's `DeviceClient` (`server-rs/src/device.rs`): a provider registers
 devices with the bridge service, and the existing lease/approval path applies unchanged. The RFC 2217 server and
 `device` CLI already work against a list of devices and would not change. This is the one place the current design
 would need real work for non-browser engines.

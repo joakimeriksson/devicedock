@@ -1,4 +1,5 @@
-//! Wire protocol: a hand-written port of packages/protocol/index.ts (the zod schemas). Keep the two in step.
+//! Wire protocol: a hand-written port of packages/protocol/index.ts (the zod schemas the page uses). Keep the two in
+//! step. Used by the backend and, inside the sandbox, by the bridge service, `device` and the MCP server.
 //! Parsing mirrors zod: unknown keys on the outer request/message objects are dropped, `.strict()` objects reject
 //! them, and defaults are filled in so what we forward to the browser is the normalised request.
 use base64::alphabet::STANDARD;
@@ -162,7 +163,7 @@ impl Request {
     }
 }
 
-fn serial_options(a: &Map<String, Value>) -> R<Value> {
+pub fn serial_options(a: &Map<String, Value>) -> R<Value> {
     strict(a, &["baudRate", "dataBits", "stopBits", "parity", "flowControl"], "args")?;
     Ok(json!({
         "baudRate": req_int(a, "baudRate", 300, 4_000_000)?,
@@ -333,9 +334,109 @@ pub fn parse_browser_message(v: &Value) -> R<BrowserMessage> {
     })
 }
 
+/// A bridge reply, checked the way the sandbox's bridge service checks it (zod `response`): `{id, ok: true, result}`
+/// or `{id, ok: false, error}`. Returns the normalised reply (unknown keys dropped; `result` may be absent).
+pub fn parse_response(v: &Value) -> R<Value> {
+    let m = obj(v, "response")?;
+    let id = req_uuid(m, "id")?;
+    match m.get("ok") {
+        Some(Value::Bool(true)) => {
+            let mut out = json!({"id": id, "ok": true});
+            if let Some(r) = m.get("result") {
+                out["result"] = r.clone();
+            }
+            Ok(out)
+        }
+        Some(Value::Bool(false)) => {
+            let error = opt_str(m, "error", 0, 500)?.ok_or("error: required")?;
+            Ok(json!({"id": id, "ok": false, "error": error}))
+        }
+        _ => Err("ok: expected a boolean".into()),
+    }
+}
+
+// ---- Sandbox side: which device answers on which port ----
+
+/// Port of the first RFC 2217 server; device N (in `order_devices` order) is on RFC2217_PORT_BASE + N.
+pub const RFC2217_PORT_BASE: u16 = 2217;
+pub const RFC2217_SLOTS: u16 = 8;
+/// Port of the first OpenOCD (cmsis-dap tcp) endpoint; probe N is on PROBE_PORT_BASE + N.
+pub const PROBE_PORT_BASE: u16 = 4441;
+pub const PROBE_SLOTS: u16 = 4;
+
+fn kind_of(d: &Value) -> &str {
+    d.get("kind").and_then(Value::as_str).unwrap_or("")
+}
+/// The order that decides which device answers on which RFC 2217 port: real hardware first, then software devices,
+/// each group in the order they were shared. Port 2217 is therefore the first physical device whenever there is one
+/// (existing tool invocations keep working); port 2217+N is the Nth device in this order. `device list` prints the
+/// same order and each device's URL, so tools never have to guess. Debug probes carry no serial stream, so they never
+/// take an RFC 2217 port (see `order_probes`).
+pub fn order_devices(devices: &[Value]) -> Vec<Value> {
+    let streams = devices.iter().filter(|d| kind_of(d) != "probe");
+    let (serial, other): (Vec<&Value>, Vec<&Value>) = streams.partition(|d| kind_of(d) == "serial");
+    serial.into_iter().chain(other).cloned().collect()
+}
+/// Debug probes in the order they were shared: the Nth one answers OpenOCD on port PROBE_PORT_BASE+N.
+pub fn order_probes(devices: &[Value]) -> Vec<Value> {
+    devices.iter().filter(|d| kind_of(d) == "probe").cloned().collect()
+}
+/// Ready-to-paste OpenOCD commands for the probe on `port` (OpenOCD master's cmsis-dap TCP backend).
+pub fn openocd_config(port: u16) -> String {
+    format!("adapter driver cmsis-dap; cmsis-dap backend tcp; cmsis-dap tcp host 127.0.0.1; cmsis-dap tcp port {port}")
+}
+pub fn rfc2217_url(port: u16) -> String {
+    format!("rfc2217://127.0.0.1:{port}")
+}
+
+/// JavaScript's `\s` (what `String.prototype.trim` removes): Unicode white space plus the byte order mark.
+pub fn js_space(c: char) -> bool {
+    c.is_whitespace() || c == '\u{feff}'
+}
+
+/// `device send --hex`: white space is ignored; complete byte pairs only, at most MAX_BYTES.
+pub fn hex_bytes(input: &str) -> R<Vec<u8>> {
+    let s: String = input.chars().filter(|c| !js_space(*c)).collect();
+    if !s.len().is_multiple_of(2) || !s.bytes().all(|c| c.is_ascii_hexdigit()) || s.len() > MAX_BYTES * 2 {
+        return Err("Enter complete hexadecimal byte pairs (maximum 16 KiB)".into());
+    }
+    hex::decode(&s).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn port_order_puts_hardware_first_and_probes_apart() {
+        assert!(is_physical("probe"));
+        let devs: Vec<Value> =
+            [("sim", 1), ("probe", 2), ("serial", 3), ("probe", 4)].iter().map(|(k, n)| json!({"kind": k, "n": n})).collect();
+        let n = |v: Vec<Value>| v.iter().map(|d| d["n"].as_i64().unwrap()).collect::<Vec<_>>();
+        assert_eq!(n(order_devices(&devs)), [3, 1]);
+        assert_eq!(n(order_probes(&devs)), [2, 4]);
+        assert!(openocd_config(PROBE_PORT_BASE + 1)
+            .ends_with("cmsis-dap backend tcp; cmsis-dap tcp host 127.0.0.1; cmsis-dap tcp port 4442"));
+        assert_eq!(rfc2217_url(RFC2217_PORT_BASE + 1), "rfc2217://127.0.0.1:2218");
+    }
+    #[test]
+    fn hex_input() {
+        assert_eq!(hex_bytes("50 49 4e 47 0a").unwrap(), b"PING\n");
+        assert_eq!(hex_bytes("").unwrap(), b"");
+        assert!(hex_bytes("5").is_err());
+        assert!(hex_bytes("zz").is_err());
+        assert!(hex_bytes(&"00".repeat(MAX_BYTES + 1)).is_err());
+    }
+    #[test]
+    fn responses() {
+        let id = id();
+        let ok = json!({"id":id,"ok":true,"result":{"a":1},"x":2});
+        assert_eq!(parse_response(&ok).unwrap(), json!({"id":id,"ok":true,"result":{"a":1}}));
+        assert_eq!(parse_response(&json!({"id":id,"ok":false,"error":"no"})).unwrap(), json!({"id":id,"ok":false,"error":"no"}));
+        assert!(parse_response(&json!({"id":id,"ok":false})).is_err());
+        assert!(parse_response(&json!({"id":id,"ok":false,"error":"x".repeat(501)})).is_err());
+        assert!(parse_response(&json!({"id":"nope","ok":true})).is_err());
+        assert!(parse_response(&json!({"id":id})).is_err());
+    }
     fn id() -> String {
         uuid::Uuid::new_v4().to_string()
     }

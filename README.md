@@ -57,18 +57,24 @@ One-shot forms also work: `start|stop|restart|restart-backend|status|open|logs|l
 ## The backend
 
 `server-rs/` is the host backend, written in Rust: one ~13 MB binary with the web UI embedded, so running DeviceDock
-needs no Node. `./devicedock.sh` uses `bin/devicedock` (from a release) or `server-rs/target/release/devicedock`, and
-builds the latter with cargo when Rust is installed.
+needs no Node. The same binary runs inside the sandbox as the bridge service, the `device` CLI and the MCP server.
+`./devicedock.sh` uses `bin/devicedock` (from a release) or `server-rs/target/release/devicedock`, and builds the
+latter with cargo when Rust is installed.
 
 ```sh
 devicedock serve                     # the backend (what ./devicedock.sh starts)
 devicedock open                      # mint a one-time login link and open Chrome
 devicedock sandbox start|stop|clean  # the hardened sandbox container
 devicedock login-codex               # codex login with the OAuth callback relay
+# inside the sandbox (/opt/devicedock/bin/devicedock):
+devicedock bridge                    # the bridge service: the container's main process
+devicedock device <command> ...      # the `device` CLI (/usr/local/bin/device runs this)
+devicedock mcp                       # the stdio MCP server
 ```
 
-Node is only needed to *develop* the web UI (see "Developing the web UI" below). Tests: `cargo test --manifest-path server-rs/Cargo.toml` (broker and protocol), then
-`npx tsx --test tests/rust/wire.test.ts` (drives the real binary over the wire) and
+Node is only needed to *develop* the web UI (see "Developing the web UI" below). Tests: `cargo test --manifest-path server-rs/Cargo.toml`
+(unit tests, plus `server-rs/tests`: the binary driven over HTTP and WebSockets, and the sandbox side end to end on test
+ports), `tests/rfc2217/run.sh` (real pyserial against the bridge, in a throwaway container from the sandbox image) and
 `node tests/rust/browser-smoke.mjs` (headless Chrome: login, share the mock, PING → PONG). CI
 (`.github/workflows/backend.yml`) builds macOS and static Linux binaries; a `v*` tag publishes them as a release.
 
@@ -154,10 +160,11 @@ Use this exact host, not `localhost`. `PORT` changes the browser port.
    id
    echo 'created inside Linux' > /workspace/proof.txt
    device list
-   /opt/devicedock/node_modules/.bin/tsx /opt/devicedock/sandbox/examples/ping.ts
+   device send DEVICE_ID --text "$(printf 'PING\n')" --read 1
+   device send DEVICE_ID --hex '00 ff 80 01 0d 0a' --read 1 | od -An -tx1
    ```
 
-3. The example must print `PONG` and confirm binary bytes `00 ff 80 01 0d 0a`. The browser monitor should show TX and RX.
+3. The first `send` must print `PONG`, the second the bytes `00 ff 80 01 0d 0a` unchanged. The browser monitor should show TX and RX.
 4. Click **Revoke access**. `device list` should no longer show the device. Commands using its old descriptor/lease must fail.
 5. Share again, simulate unplug, and share once more. Each sharing creates a new generation and requires a new lease.
 6. The agent terminal launches the actual Linux `codex` binary. Until login succeeds it may display authentication/setup prompts; this is not an authenticated agent response.
@@ -206,12 +213,12 @@ From the Linux workspace terminal:
 
 ```sh
 codex login status
-codex mcp add devicedock -- /opt/devicedock/node_modules/.bin/tsx /opt/devicedock/packages/mcp-server/index.ts
+codex mcp add devicedock -- /opt/devicedock/bin/devicedock mcp
 ```
 
 Restart the agent terminal after configuration. Credentials stay inside the dedicated `devicedock-home` Docker volume. Host authentication files and the Docker socket are never mounted into the sandbox.
 
-The stdio MCP server exposes discovery, acquisition/release, connect/disconnect, read/write, configure, and signal tools. MCP and CLI requests use the same SDK and backend authorization path. There is no HTTP MCP listener. MCP tools return explicit errors for missing leases and denied approvals.
+The stdio MCP server exposes discovery, acquisition/release, connect/disconnect, read/write, configure, and signal tools. MCP and CLI requests use the same device client and backend authorization path. There is no HTTP MCP listener. MCP tools return explicit errors for missing leases and denied approvals.
 
 ## Device use
 
@@ -219,7 +226,7 @@ The stdio MCP server exposes discovery, acquisition/release, connect/disconnect,
 
 Only use known safe commands for an identified board. The bridge does not classify arbitrary serial bytes as safe or detect firmware flashing. Unsupported flashing protocol operations are rejected.
 
-The UI offers baud changes, text/hex input, a text/hex monitor, DTR/RTS high and low controls, revocation, and explicit close. The SDK/MCP also accept parity, data/stop bits, hardware flow control, and break signals. Device support for settings and signal changes varies. The mock supports deterministic echo, `PING` → `PONG`, five-second telemetry, latency, injected errors, unplug, baud configuration, and signal state.
+The UI offers baud changes, text/hex input, a text/hex monitor, DTR/RTS high and low controls, revocation, and explicit close. The MCP tools also accept parity, data/stop bits, hardware flow control, and break signals. Device support for settings and signal changes varies. The mock supports deterministic echo, `PING` → `PONG`, five-second telemetry, latency, injected errors, unplug, baud configuration, and signal state.
 
 ```sh
 # Inside the container:
@@ -232,16 +239,17 @@ device monitor DEVICE_ID
 device disconnect DEVICE_ID
 ```
 
-Each CLI command acquires and releases its own exclusive lease. A monitor currently holds that lease; another command cannot write concurrently. Use `DeviceClient.using()` for programs that need to send and receive in one lease. Reads consume only the active lease's bounded queue; the independent browser monitor never steals program bytes. Empty reads return immediately; clients may poll. A lease expires after 30 seconds idle, and accepted operations renew it. There is no automatic retry of writes.
+Each CLI command acquires and releases its own exclusive lease. A monitor currently holds that lease; another command cannot write concurrently. Programs that need to send and receive in one lease use `device send --read`, the MCP tools (acquire, then read and write with the lease), or pyserial on the device's `rfc2217` URL. Reads consume only the active lease's bounded queue; the independent browser monitor never steals program bytes. Empty reads return immediately; clients may poll. A lease expires after 30 seconds idle, and accepted operations renew it. There is no automatic retry of writes.
 
 ## Architecture and boundaries
 
 ```text
 Browser adapter ↔ authenticated browser WebSocket ↔ Mac broker
                                                       ↕ WebSocket, carried by `devicedock tunnel` (docker exec pipe)
-                                         sandbox bridge service :47832 (inside the container)
-                                                      ↕ authenticated HTTP
-                                    container SDK / CLI / stdio MCP
+                    sandbox bridge service :47832 (`devicedock bridge`, inside the container)
+                      ├ RFC 2217 :2217+ and OpenOCD :4441+ endpoints (in the bridge itself)
+                      ↕ authenticated HTTP
+                    `device` CLI / stdio MCP (`devicedock device`, `devicedock mcp`)
 ```
 
 The sandbox has no network interface besides loopback and publishes no ports. The backend reaches the bridge service

@@ -8,9 +8,9 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths: [server-rs/**, apps/web/**, packages/**, tests/rust/**, package.json, package-lock.json, devicedock.sh, install.sh, .github/workflows/backend.yml]
+    paths: [server-rs/**, apps/web/**, packages/**, tests/**, package.json, package-lock.json, devicedock.sh, install.sh, .github/workflows/backend.yml]
   pull_request:
-    paths: [server-rs/**, apps/web/**, packages/**, tests/rust/**, package.json, package-lock.json, devicedock.sh, install.sh, .github/workflows/backend.yml]
+    paths: [server-rs/**, apps/web/**, packages/**, tests/**, package.json, package-lock.json, devicedock.sh, install.sh, .github/workflows/backend.yml]
   workflow_dispatch:
 
 permissions:
@@ -33,7 +33,7 @@ jobs:
         with: { node-version: 22, cache: npm }
       # The web UI is built first: the release binary embeds dist/.
       - run: npm ci && npm run build
-      - name: Typecheck and TypeScript tests (web UI, sandbox-side clients)
+      - name: Typecheck and TypeScript tests (web UI)
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: npm run typecheck && npm test
       - uses: dtolnay/rust-toolchain@stable
@@ -42,14 +42,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: server-rs, key: "${{ matrix.target }}" }
-      - name: Unit tests
+      # Unit tests, plus black-box tests of the binary (server-rs/tests): the backend over HTTP and WebSockets, and the
+      # sandbox side (bridge, device CLI, MCP, RFC 2217) end to end, on test ports.
+      - name: Tests
         if: matrix.native
         run: cargo test --manifest-path server-rs/Cargo.toml --target ${{ matrix.target }}
       - name: Build
         run: cargo build --release --manifest-path server-rs/Cargo.toml --target ${{ matrix.target }}
-      - name: Wire tests against the binary (HTTP, WebSockets, the page and bridge protocol)
-        if: matrix.native
-        run: DEVICEDOCK_BIN=server-rs/target/${{ matrix.target }}/release/devicedock npx tsx --test tests/rust/wire.test.ts
       - name: Package
         run: |
           mkdir -p out && cp server-rs/target/${{ matrix.target }}/release/devicedock devicedock.sh out/

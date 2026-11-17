@@ -19,8 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 RUN git clone https://github.com/mikroverk/cooja-ng.git /src && cd /src && git checkout "$COOJA_NG_COMMIT" \
  && make -j"$(nproc)" NATIVE_FLAG= WERROR=0 && make install PREFIX=/opt/cooja-ng NATIVE_FLAG= WERROR=0
 
-# DeviceDock's own binary, for `devicedock tunnel`: the sandbox runs with --network none, and this tunnel to the backend
-# (over `docker exec`) is its only network path, past the firewall. Same crate as the host backend (server-rs).
+# DeviceDock's own binary, the same crate as the host backend (server-rs). In the sandbox it is the bridge service (the
+# container's main process: device link, RFC 2217 and OpenOCD endpoints), the `device` CLI, the MCP server, and
+# `devicedock tunnel`: the sandbox runs with --network none, and this tunnel to the backend (over `docker exec`) is its
+# only network path, past the firewall.
 FROM rust:1.99-bookworm AS devicedock-rs
 WORKDIR /src
 COPY server-rs ./server-rs
@@ -47,13 +49,11 @@ RUN ln -s /opt/openocd/bin/openocd /usr/local/bin/openocd
 COPY --from=cooja-ng /opt/cooja-ng /opt/cooja-ng
 RUN ln -s /opt/cooja-ng/bin/cngsim /usr/local/bin/cngsim
 WORKDIR /opt/devicedock
-COPY package*.json ./
-RUN npm ci && npm install -g --prefix /opt/agent @openai/codex@0.167.0 opencode-ai@1.19.5 && npm cache clean --force
+RUN npm install -g --prefix /opt/agent @openai/codex@0.167.0 opencode-ai@1.19.5 && npm cache clean --force
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir esptool pyserial mpremote
 ENV PATH="/opt/venv/bin:$PATH"
 # Login shells (bash -l) reset PATH, so export it from profile.d as well.
 RUN echo 'export PATH="/opt/venv/bin:$PATH:/home/node/.devicedock/agents/bin"' > /etc/profile.d/devicedock-venv.sh
-COPY packages ./packages
 COPY sandbox ./sandbox
 COPY --from=devicedock-rs /out/devicedock /opt/devicedock/bin/devicedock
 # esptool on a shared real board first asks the human for one flash session (see sandbox/esptool-preflight.py);
@@ -64,7 +64,7 @@ RUN for f in esptool esptool.py; do install -m 755 /opt/devicedock/sandbox/espto
 RUN install -m 755 /opt/devicedock/sandbox/agent-wrapper.sh /usr/local/bin/devicedock-agent \
  && for b in claude codex opencode; do ln -s devicedock-agent /usr/local/bin/$b; done \
  && echo "$CLAUDE_CODE_VERSION" > /etc/devicedock-claude-version
-RUN printf '#!/bin/sh\nexec /opt/devicedock/node_modules/.bin/tsx /opt/devicedock/packages/device-client/cli.ts "$@"\n' > /usr/local/bin/device && chmod +x /usr/local/bin/device \
+RUN printf '#!/bin/sh\nexec /opt/devicedock/bin/devicedock device "$@"\n' > /usr/local/bin/device && chmod +x /usr/local/bin/device \
  && mkdir /workspace && chown node:node /workspace \
  && echo base > /etc/devicedock-variant
 USER node
@@ -76,7 +76,7 @@ ENV PATH="$PATH:/home/node/.devicedock/agents/bin"
 EXPOSE 47832
 # The backend starts the sandbox with --network none and the tunnel when it sees this label (server-rs/src/sandbox.rs).
 LABEL devicedock.tunnel=1
-CMD ["/opt/devicedock/node_modules/.bin/tsx","/opt/devicedock/sandbox/bridge-service/index.ts"]
+CMD ["/opt/devicedock/bin/devicedock","bridge"]
 
 # ---- Contiki-NG: a read-only reference checkout with submodules; copy it to /workspace to work on it. ----
 FROM base AS contiki

@@ -689,6 +689,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn approval_expires_with_the_lease_and_does_not_dispatch() {
+        let t = Arc::new(AtomicI64::new(now_ms()));
+        let tc = t.clone();
+        let b = Broker::with_clock(Box::new(move || tc.load(Ordering::SeqCst)), 100);
+        let sent: Sent = Arc::default();
+        let d = desc("serial", false);
+        b.expose("browser", sink(&sent), d.clone()).unwrap();
+        let r = |op: &str, lease: Option<&str>, args: Value| req(&d.id, op, lease, args, t.load(Ordering::SeqCst) + 5000);
+        let lease = b.run("a", Source::Agent, &r("serial.acquire", None, json!({}))).await.unwrap()["lease"].as_str().unwrap().to_string();
+        let w = r("serial.write", Some(&lease), json!({"data": "AA=="}));
+        let id = w["id"].as_str().unwrap().to_string();
+        let b2 = b.clone();
+        let p = tokio::spawn(async move { b2.run("a", Source::Agent, &w).await });
+        tick().await;
+        t.fetch_add(101, Ordering::SeqCst);
+        b.approve("browser", &id, true);
+        assert!(p.await.unwrap().unwrap_err().contains("expired"));
+        assert_eq!(sent.lock().unwrap().len(), 1, "only the approval request; the write never reached the page");
+    }
+
+    #[tokio::test]
     async fn overflow_is_explicit_and_stale_generation_data_is_dropped() {
         let f = fixture(true, "mock");
         let lease = f.lease("a").await;
