@@ -229,6 +229,7 @@ pub async fn run() -> Result<(), String> {
         }
     });
     let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+    let mut running = tokio::task::JoinSet::new();
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(msg) = serde_json::from_str::<Value>(line.trim()) else {
             if !line.trim().is_empty() {
@@ -237,14 +238,17 @@ pub async fn run() -> Result<(), String> {
             continue;
         };
         let (client, tx) = (client.clone(), tx.clone());
-        tokio::spawn(async move {
+        running.spawn(async move {
             if let Some(reply) = handle(&client, &msg).await {
                 let _ = tx.send(reply.to_string());
             }
         });
+        while running.try_join_next().is_some() {}
     }
+    // stdin closed: answer what is still running (each request has its own deadline), then exit.
+    while running.join_next().await.is_some() {}
     drop(tx);
-    writer.abort();
+    let _ = writer.await;
     Ok(())
 }
 

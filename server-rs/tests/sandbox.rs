@@ -168,7 +168,7 @@ async fn agent_tools_reach_a_shared_device_through_bridge_and_backend() {
         json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "devices_list", "arguments": {}}}),
     ];
     let input: String = requests.iter().map(|r| r.to_string() + "\n").collect();
-    // Keep stdin open briefly so the call can finish before the server sees EOF.
+    // stdin closes right after the requests: the server still answers all of them before it exits.
     let mcp = tokio::task::spawn_blocking({
         let env = env.clone();
         move || {
@@ -180,7 +180,6 @@ async fn agent_tools_reach_a_shared_device_through_bridge_and_backend() {
             let mut child = cmd.spawn().unwrap();
             let mut stdin = child.stdin.take().unwrap();
             stdin.write_all(input.as_bytes()).unwrap();
-            std::thread::sleep(Duration::from_millis(1500));
             drop(stdin);
             child.wait_with_output().unwrap()
         }
