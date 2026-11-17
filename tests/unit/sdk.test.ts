@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { Broker } from "../../apps/server/broker.ts";
+import { Broker } from "../fixtures/broker.ts";
 import { DeviceClient } from "../../packages/device-client/index.ts";
 import { MockAdapter, encode, decode } from "../../apps/web/src/adapters.ts";
 test("SDK and browser mock round-trip through shared broker, then fail after revocation", async () => {

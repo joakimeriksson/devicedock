@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-/** Polls a JSON endpoint while `enabled`. A 404 (the Node backend has no such API) leaves the value null. */
+/** Polls a JSON endpoint while `enabled`. Until it answers, or if it fails, the value stays null. */
 export function usePoll<T>(url: string, ms: number, enabled: boolean): [T | null, (v: T) => void] {
   const [value, setValue] = useState<T | null>(null);
   useEffect(() => {

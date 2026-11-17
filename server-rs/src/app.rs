@@ -1,4 +1,4 @@
-//! Port of apps/server/app.ts: loopback-only HTTP + WebSocket server (one-time login links, session cookie, CSRF),
+//! Loopback-only HTTP + WebSocket server (one-time login links, session cookie, CSRF),
 //! the device WebSocket for pages, the terminal WebSockets, and the outbound connection to the sandbox bridge.
 use crate::broker::{now_ms, Broker, Sink, Source};
 use crate::protocol::{parse_browser_message, parse_request, BrowserMessage};
@@ -561,7 +561,7 @@ pub fn spawn_bridge(app: Shared) {
 
 async fn bridge_once(app: &Shared) -> Result<(), String> {
     let token = bridge_token().map_err(|e| e.to_string())?;
-    // DEVICEDOCK_BRIDGE_PORT lets the parity tests point the backend at a fake bridge.
+    // DEVICEDOCK_BRIDGE_PORT lets the wire tests point the backend at a fake bridge.
     let test_port = std::env::var("DEVICEDOCK_BRIDGE_PORT").ok().and_then(|p| p.parse::<u16>().ok());
     let port = test_port.unwrap_or(BRIDGE_PORT);
     let mut req = format!("ws://127.0.0.1:{port}/bridge").into_client_request().map_err(|e| e.to_string())?;

@@ -17,12 +17,13 @@ This page covers macOS and Linux. Allow **~30 minutes the first time**: most of 
 
 | You need | macOS | Linux |
 | --- | --- | --- |
-| The backend: **one** of the three below | | |
+| The backend: **one** of the two below | | |
 | a. the installer (nothing else to install) | `curl -fsSL https://github.com/joakimeriksson/devicedock/releases/latest/download/install.sh \| sh` | same |
 | b. Rust, and `./devicedock.sh` builds the binary once (about a minute) | `brew install rust` | `curl https://sh.rustup.rs -sSf \| sh` |
-| c. the original Node backend (also needed to *change* the web UI) | `brew install node` + `xcode-select --install` | Node 22.12+ + `sudo apt install build-essential python3` |
 | Docker | Docker Desktop, **or** `brew install colima docker && colima start --cpu 4 --memory 6` | Docker Engine (`docker info` must work **without sudo**) |
 | A browser with WebUSB / Web Serial | **Chrome** or **Edge** (not Safari, not Firefox) | **Chrome** or **Chromium** or **Edge** |
+
+Node.js is not needed to run DeviceDock; only to change the web UI (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ### Linux only: let the browser open the board
 Chrome runs as you, not as root, so give your user access to the boards. For a TI LaunchPad (XDS110):

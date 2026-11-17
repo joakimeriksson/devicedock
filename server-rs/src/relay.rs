@@ -1,4 +1,4 @@
-//! Port of scripts/login-relay.ts: opt-in OAuth callback relay for `codex login` inside the sandbox.
+//! Opt-in OAuth callback relay for `codex login` inside the sandbox.
 //! Binds host 127.0.0.1:1455 only while the login runs, forwards ONLY `GET /auth/callback`, and never logs request
 //! contents (the query string holds the authorization code).
 use crate::sandbox::{verify_managed, CONTAINER};

@@ -11,7 +11,7 @@ You need Docker, Chrome or Edge, [Rust](https://rustup.rs) (stable) and Node.js 
 
 ```sh
 git clone https://github.com/joakimeriksson/devicedock && cd devicedock
-npm ci                 # web UI, Node tests, the original Node backend
+npm ci                 # the web UI's build tools and the TypeScript tests
 ./devicedock.sh        # builds the Rust backend, downloads a sandbox image, starts everything
 ```
 
@@ -24,10 +24,9 @@ a Rust change, and `i` builds the sandbox image from `sandbox/Dockerfile` (`DEVI
 | --- | --- |
 | `server-rs/` | The host backend in Rust: web server, device broker, terminals, sandbox lifecycle, firewall, tunnel, shared folders |
 | `apps/web/` | The page (React, xterm.js): device sharing, terminals, Network and Shared folders panels |
-| `apps/server/` | The original Node backend, kept for web UI work and as the protocol reference |
 | `packages/` | Protocol types, the `device` CLI and SDK, the MCP server (these run inside the sandbox) |
 | `sandbox/` | The sandbox image (`Dockerfile`, variants base/contiki/esp32/full), the bridge service, `AGENTS.md` for agents |
-| `tests/` | Node unit and integration tests, Rust parity tests, browser tests |
+| `tests/` | TypeScript unit tests (web UI, sandbox-side clients), wire tests against the Rust binary, browser tests |
 | `docs/` | The project web page (GitHub Pages) |
 
 [ARCHITECTURE.md](ARCHITECTURE.md) explains the layers and how to add a new kind of device or simulator.
@@ -35,7 +34,7 @@ a Rust change, and `i` builds the sandbox image from `sandbox/Dockerfile` (`DEVI
 ## Test before you send
 
 ```sh
-./devicedock.sh test        # cargo test, typecheck, Node tests, and the Rust parity tests
+./devicedock.sh test        # cargo test, typecheck, TypeScript tests, and the wire tests against the binary
 cargo clippy --manifest-path server-rs/Cargo.toml --all-targets
 ```
 

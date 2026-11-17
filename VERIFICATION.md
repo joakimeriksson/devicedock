@@ -1,5 +1,8 @@
 # Verification record — 2026-11-06
 
+> Historical record of the first verification passes. The Node backend it describes (`npm start`, `apps/server`)
+> has since been removed; the backend is the Rust binary in `server-rs/`, see README.md.
+
 ## Follow-up after user installation
 
 - User reports successful dependency installation and Docker image build.

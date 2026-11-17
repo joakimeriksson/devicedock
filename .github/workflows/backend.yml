@@ -33,6 +33,9 @@ jobs:
         with: { node-version: 22, cache: npm }
       # The web UI is built first: the release binary embeds dist/.
       - run: npm ci && npm run build
+      - name: Typecheck and TypeScript tests (web UI, sandbox-side clients)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: npm run typecheck && npm test
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: "${{ matrix.target }}" }
       - if: contains(matrix.target, 'musl')
@@ -44,9 +47,9 @@ jobs:
         run: cargo test --manifest-path server-rs/Cargo.toml --target ${{ matrix.target }}
       - name: Build
         run: cargo build --release --manifest-path server-rs/Cargo.toml --target ${{ matrix.target }}
-      - name: Wire tests against the binary (same protocol as the Node backend)
+      - name: Wire tests against the binary (HTTP, WebSockets, the page and bridge protocol)
         if: matrix.native
-        run: DEVICEDOCK_BIN=server-rs/target/${{ matrix.target }}/release/devicedock npx tsx --test tests/rust/parity.test.ts
+        run: DEVICEDOCK_BIN=server-rs/target/${{ matrix.target }}/release/devicedock npx tsx --test tests/rust/wire.test.ts
       - name: Package
         run: |
           mkdir -p out && cp server-rs/target/${{ matrix.target }}/release/devicedock devicedock.sh out/

@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createDeviceMcpServer } from "../../packages/mcp-server/server.ts";
 import { DeviceClient } from "../../packages/device-client/index.ts";
-import { Broker } from "../../apps/server/broker.ts";
+import { Broker } from "../fixtures/broker.ts";
 test("MCP discovery and writes use SDK leases and physical approval enforcement", async () => {
   const broker = new Broker(),
     sent: any[] = [];
