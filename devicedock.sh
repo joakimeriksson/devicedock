@@ -16,7 +16,8 @@ die() { echo "error: $*" >&2; exit 1; }
 need_docker() { docker info >/dev/null 2>&1 || die "Docker is not reachable. Start it (e.g. 'colima start') and retry."; }
 
 # Backend: the self-contained Rust binary (web UI embedded). DEVICEDOCK_BIN picks one; otherwise bin/devicedock (from a
-# release) or this checkout's build, which is made with cargo when there is none yet.
+# release) or this checkout's build, which is made with cargo when there is none yet. In a source checkout the backend
+# serves the page from ./apps/web, so a change to the page needs only a reload.
 find_bin() {
   local b; for b in "${DEVICEDOCK_BIN:-}" bin/devicedock server-rs/target/release/devicedock; do
     [ -n "$b" ] && [ -x "$b" ] && { echo "$b"; return; }; done; return 0
@@ -24,12 +25,9 @@ find_bin() {
 BIN=$(find_bin)
 if [ -z "$BIN" ] && command -v cargo >/dev/null; then
   say "Building the backend (one time, about a minute)"
-  if [ ! -f dist/index.html ] && command -v npm >/dev/null; then [ -d node_modules ] || npm ci; npm run -s build; fi
   cargo build --release --manifest-path server-rs/Cargo.toml && BIN=server-rs/target/release/devicedock
 fi
 [ -n "$BIN" ] || die "no backend binary: install a release (see README) or Rust (cargo) to build one"
-# Node is only for changing the web UI (and its tests); running DeviceDock never needs it.
-need_node() { command -v npm >/dev/null || die "this needs Node.js (only for developing the web UI)"; [ -d node_modules ] || npm ci; }
 ddctl() { "$BIN" "$@"; }
 
 backend_pid() {
@@ -80,7 +78,7 @@ cmd_pull() {
   need_docker; say "Downloading $REMOTE:$VARIANT"
   docker pull "$REMOTE:$VARIANT" && docker tag "$REMOTE:$VARIANT" $IMAGE && say "Using $REMOTE:$VARIANT (recreate the sandbox to switch: rs)"
 }
-cmd_build() { need_docker; need_node; say "Building frontend"; npm run -s build; build_image; }
+cmd_build() { need_docker; build_image; }
 
 # Bring a running installation up to date: the newest published image for the sandbox's own variant, a sandbox
 # recreated from it (volumes, so files and agent logins, are kept), and a backend restarted on the current binary.
@@ -91,7 +89,6 @@ cmd_upgrade() {
   VARIANT="${v:-$VARIANT}"
   if [ "$BIN" = server-rs/target/release/devicedock ] && command -v cargo >/dev/null; then
     say "Rebuilding the backend from this checkout"
-    if command -v npm >/dev/null; then need_node; npm run -s build; fi
     cargo build --release --manifest-path server-rs/Cargo.toml || die "backend build failed"
   fi
   cmd_pull || die "could not download the sandbox image"
@@ -173,7 +170,8 @@ cmd_login() {
 
 run_tests() {
   if command -v cargo >/dev/null; then cargo test --manifest-path server-rs/Cargo.toml || return 1; fi
-  if command -v npm >/dev/null; then need_node; npm run -s typecheck && npm test || return 1; fi
+  # The page's tests need Deno (https://deno.com); everything else is in cargo test.
+  if command -v deno >/dev/null; then deno test || return 1; else echo "(deno not installed: skipping the page's tests)"; fi
 }
 
 cmd_clean() {
@@ -183,11 +181,6 @@ cmd_clean() {
 }
 
 # ---- interactive console: starts everything, shows status, takes restart commands ----
-web_state() {
-  [ -f dist/index.html ] || { echo "embedded in the backend binary"; return; }
-  local newer; newer=$(find apps/web/src packages -newer dist/index.html -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \) 2>/dev/null | grep -v node_modules | head -1)
-  [ -n "$newer" ] && echo "STALE (changed: $newer; use: w)" || echo "up to date"
-}
 image_state() {
   docker image inspect $IMAGE >/dev/null 2>&1 || { echo "missing"; return; }
   local img ctr; img=$(docker image inspect -f '{{.Id}}' $IMAGE); ctr=$(docker inspect -f '{{.Image}}' $CONTAINER 2>/dev/null || true)
@@ -199,7 +192,6 @@ console_status() {
   if [ -n "$pid" ]; then printf 'backend  : \033[32mrunning\033[0m pid %s  http://127.0.0.1:%s\n' "$pid" "$PORT"
   else printf 'backend  : \033[31mstopped\033[0m\n'; fi
   [ -z "$pid" ] || backend_stale "$pid" console | while IFS= read -r l; do printf '  \033[33m%s\033[0m\n' "$l"; done
-  echo "web build: $(web_state)"
   if docker info >/dev/null 2>&1; then
     if sandbox_running; then printf 'sandbox  : \033[32mrunning\033[0m  %s image, %s\n' "$(docker exec $CONTAINER cat /etc/devicedock-variant 2>/dev/null || echo older)" "$(image_state)"
       if [ "$(docker inspect -f '{{index .Config.Labels "devicedock.network"}}' $CONTAINER 2>/dev/null)" = tunnel ]; then
@@ -217,7 +209,7 @@ console_status() {
 console_help() {
   cat <<'H'
 commands:  s status   rb restart backend   rs recreate sandbox   u upgrade (newest image + restart)
-           w rebuild web   i build image   p download image   o login link   l backend log   d device list   sh sandbox shell   t tests   login <codex|claude|opencode>
+           i build image   p download image   o login link   l backend log   d device list   sh sandbox shell   t tests   login <codex|claude|opencode>
            ra reset agents (back to the image's versions)
            stop  stop everything   q quit (leave running)   x quit and stop everything   h help
 H
@@ -233,7 +225,6 @@ cmd_console() {
       rb) ( cmd_restart_backend ) ;;
       rs) printf 'Recreate the sandbox container? Agent terminals end; volumes are kept. [y/N] '; read -r a
           [ "$a" = y ] && ( need_docker; ddctl sandbox clean; ddctl sandbox start; end_stray_codex ); console_status ;;
-      w)  ( need_node; npm run -s build ) && say "Web rebuilt: reload the DeviceDock page (served from ./dist)" ;;
       i)  ( need_docker; build_image ) && say "Image built: use rs to recreate the sandbox from it" ;;
       p)  ( cmd_pull ) ;;
       u)  printf 'Upgrade: download the newest sandbox image, recreate the sandbox and restart the backend.\nAgent terminals end; files and logins are kept. Continue? [y/N] '; read -r a

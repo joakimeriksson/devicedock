@@ -23,7 +23,8 @@ This page covers macOS and Linux. Allow **~30 minutes the first time**: most of 
 | Docker | Docker Desktop, **or** `brew install colima docker && colima start --cpu 4 --memory 6` | Docker Engine (`docker info` must work **without sudo**) |
 | A browser with WebUSB / Web Serial | **Chrome** or **Edge** (not Safari, not Firefox) | **Chrome** or **Chromium** or **Edge** |
 
-Node.js is not needed to run DeviceDock; only to change the web UI (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+Node.js is not needed to run DeviceDock or to change the web UI, which has no build step: edit a file in `apps/web`
+and reload the page (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ### Linux only: let the browser open the board
 Chrome runs as you, not as root, so give your user access to the boards. For a TI LaunchPad (XDS110):

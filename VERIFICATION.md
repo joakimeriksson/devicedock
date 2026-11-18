@@ -2,7 +2,9 @@
 
 > Historical record of the first verification passes. The Node backend it describes (`npm start`, `apps/server`)
 > has since been removed; the backend is the Rust binary in `server-rs/`, see README.md. The sandbox-side TypeScript
-> (bridge service, `device` CLI and SDK, MCP server) has since moved into the same binary.
+> (bridge service, `device` CLI and SDK, MCP server) has since moved into the same binary. The React/Vite build of the
+> page (`npm run build`, `dist/`) and the Playwright test are gone too: the page is plain JavaScript with no build
+> step, tested with Deno (README.md, "Developing the web UI").
 
 ## Follow-up after user installation
 

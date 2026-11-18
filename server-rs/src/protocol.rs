@@ -1,6 +1,6 @@
-//! Wire protocol: a hand-written port of packages/protocol/index.ts (the zod schemas the page uses). Keep the two in
-//! step. Used by the backend and, inside the sandbox, by the bridge service, `device` and the MCP server.
-//! Parsing mirrors zod: unknown keys on the outer request/message objects are dropped, `.strict()` objects reject
+//! Wire protocol. The page checks the same rules in apps/web/src/protocol.js: keep the two in step. Used by the
+//! backend and, inside the sandbox, by the bridge service, `device` and the MCP server.
+//! Parsing rules: unknown keys on the outer request/message objects are dropped, strict objects (the args) reject
 //! them, and defaults are filled in so what we forward to the browser is the normalised request.
 use base64::alphabet::STANDARD;
 use base64::engine::{general_purpose::GeneralPurpose, DecodePaddingMode, GeneralPurposeConfig};
