@@ -1,6 +1,6 @@
 // The page's checks of what the backend asks it to do (apps/web/src/protocol.js; the full protocol is
 // server-rs/src/protocol.rs).
-import assert from "node:assert/strict";
+import assert from "../assert.js";
 import { isPhysical, isVirtual, parseOptions, parseRequest } from "../../apps/web/src/protocol.js";
 
 const req = (op, args, extra = {}) => ({ v: 1, id: crypto.randomUUID(), op, deviceId: crypto.randomUUID(), generation: 2, deadline: Date.now() + 1000, args, ...extra });

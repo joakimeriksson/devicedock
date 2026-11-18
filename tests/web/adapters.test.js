@@ -1,5 +1,5 @@
 // The page's loopback mock and the base64 helpers that carry device bytes over the WebSocket.
-import assert from "node:assert/strict";
+import assert from "../assert.js";
 import { MockAdapter, encode, decode } from "../../apps/web/src/adapters.js";
 
 Deno.test("base64 carries every byte value", () => {

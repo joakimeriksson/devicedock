@@ -1,5 +1,5 @@
 // The page's USB names and the approval dialog's wording.  deno test
-import assert from "node:assert/strict";
+import assert from "../assert.js";
 import { migrateRememberKey, usbKey, usbName } from "../../apps/web/src/usb.js";
 import { describe, plain, visible } from "../../apps/web/src/approval.js";
 import { encode } from "../../apps/web/src/adapters.js";

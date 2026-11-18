@@ -54,12 +54,16 @@ async fn main() -> ExitCode {
         ["tunnel"] => tunnel::run_in_sandbox().await,
         ["bridge"] => bridge::run().await,
         ["mcp"] => mcp::run().await,
+        ["pipe", port] => match port.parse() {
+            Ok(port) => relay::pipe(port).await,
+            Err(_) => Err(format!("not a port: {port}")),
+        },
         ["--version"] | ["version"] => {
             println!("devicedock {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         _ => Err("usage: devicedock [serve | open | sandbox start|stop|clean | login-codex | --version]\n\
-                  in the sandbox: devicedock [bridge | device <command> ... | mcp]"
+                  in the sandbox: devicedock [bridge | device <command> ... | mcp | pipe <port>]"
             .into()),
     };
     match r {

@@ -7,8 +7,8 @@ self-contained.
 
 ## Set up
 
-You need Docker, Chrome or Edge and [Rust](https://rustup.rs) (stable). For the tests: [Deno](https://deno.com) (the
-web UI's tests) and Node.js 22.12+ (the TypeScript that runs in the sandbox).
+You need Docker, Chrome or Edge and [Rust](https://rustup.rs) (stable). For the web UI's tests:
+[Deno](https://deno.com). Node.js is not needed.
 
 ```sh
 git clone https://github.com/joakimeriksson/devicedock && cd devicedock

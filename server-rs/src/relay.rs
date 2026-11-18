@@ -1,7 +1,9 @@
 //! Opt-in OAuth callback relay for `codex login` inside the sandbox.
 //! Binds host 127.0.0.1:1455 only while the login runs, forwards ONLY `GET /auth/callback`, and never logs request
-//! contents (the query string holds the authorization code).
+//! contents (the query string holds the authorization code). Each callback reaches the login server through
+//! `devicedock pipe` in the sandbox.
 use crate::sandbox::{verify_managed, CONTAINER};
+use crate::tunnel::SANDBOX_BIN;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -11,11 +13,31 @@ use tokio::process::Command;
 const PORT: u16 = 1455;
 const TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-fn pipe_js() -> String {
-    format!(
-        "const s=require('net').connect({PORT},'localhost');process.stdin.pipe(s);s.pipe(process.stdout);\
-         s.on('error',()=>process.exit(1));s.on('close',()=>process.exit(0))"
-    )
+/// In the sandbox: joins stdin and stdout to localhost:`port`, and exits 0 when the connection closes or 1 if it fails.
+pub async fn pipe(port: u16) -> ! {
+    let code = match TcpStream::connect(("localhost", port)).await {
+        Ok(mut s) => {
+            let (mut r, mut w) = s.split();
+            let up = async {
+                let _ = tokio::io::copy(&mut tokio::io::stdin(), &mut w).await;
+                let _ = w.shutdown().await;
+                std::future::pending::<()>().await
+            };
+            let mut out = tokio::io::stdout();
+            let down = async {
+                let r = tokio::io::copy(&mut r, &mut out).await;
+                let _ = out.flush().await;
+                r
+            };
+            tokio::select! {
+                r = down => i32::from(r.is_err()),
+                _ = up => unreachable!(),
+            }
+        }
+        Err(_) => 1,
+    };
+    // Exit at once: a read of stdin still waiting would otherwise hold the runtime open.
+    std::process::exit(code)
 }
 
 pub async fn login_codex() -> Result<(), String> {
@@ -86,7 +108,7 @@ async fn relay_one(mut client: TcpStream) {
         return;
     }
     let Ok(mut relay) = Command::new("docker")
-        .args(["exec", "-i", CONTAINER, "node", "-e", &pipe_js()])
+        .args(["exec", "-i", CONTAINER, SANDBOX_BIN, "pipe", &PORT.to_string()])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
