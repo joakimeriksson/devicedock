@@ -1,4 +1,4 @@
-//! Port of apps/server/sandbox.ts: the hardened sandbox container and the health probe.
+//! The hardened sandbox container and the health probe.
 use rand::RngCore;
 use serde_json::{json, Value};
 use std::process::Stdio;

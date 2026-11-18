@@ -48,7 +48,6 @@ COPY --from=cooja-ng /opt/cooja-ng /opt/cooja-ng
 RUN ln -s /opt/cooja-ng/bin/cngsim /usr/local/bin/cngsim
 WORKDIR /opt/devicedock
 COPY package*.json ./
-COPY scripts/prepare-pty.mjs ./scripts/prepare-pty.mjs
 RUN npm ci && npm install -g --prefix /opt/agent @openai/codex@0.167.0 opencode-ai@1.19.5 && npm cache clean --force
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir esptool pyserial mpremote
 ENV PATH="/opt/venv/bin:$PATH"

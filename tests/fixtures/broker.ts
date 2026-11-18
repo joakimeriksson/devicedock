@@ -1,3 +1,6 @@
+// An in-process stand-in for the backend's broker (the real one is server-rs/src/broker.rs), used only by the tests of
+// the TypeScript that still runs in the sandbox: the device client, the MCP server and the probe bridge. It goes away
+// when those move to Rust.
 import { randomUUID } from "node:crypto";
 import {
   request,

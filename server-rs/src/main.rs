@@ -1,10 +1,10 @@
 //! DeviceDock host backend in one binary. Subcommands:
-//!   serve (default)            the loopback web server + broker (apps/server/index.ts)
-//!   open                       mint a fresh one-time login link and open it in Chrome (scripts/open.mjs)
-//!   sandbox start|stop|clean   manage the hardened sandbox container (scripts/sandbox.ts)
-//!   login-codex                run `codex login` in the sandbox with the OAuth callback relay (scripts/login-relay.ts)
+//!   serve (default)            the loopback web server + broker
+//!   open                       mint a fresh one-time login link and open it in Chrome
+//!   sandbox start|stop|clean   manage the hardened sandbox container
+//!   login-codex                run `codex login` in the sandbox with the OAuth callback relay
 //!   tunnel                     inside the sandbox only: its network path to the backend (see tunnel.rs)
-//! Files live in ./.runtime and ./dist relative to the working directory, exactly like the Node backend.
+//! Files live in ./.runtime and ./dist relative to the working directory.
 mod app;
 mod broker;
 mod firewall;

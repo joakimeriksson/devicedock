@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-// Folders from this computer shared into the sandbox at /shares/<name> (Rust backend only; see server-rs/src/shares.rs).
+// Folders from this computer shared into the sandbox at /shares/<name> (see server-rs/src/shares.rs).
 type Share = { path: string; display: string; readonly: boolean; target: string; problem?: string };
 export type SharesView = { shares: Share[]; container: boolean; pending: boolean; error?: string };
 type View = SharesView;

@@ -1,6 +1,6 @@
-// Black-box tests for the Rust backend (server-rs). They drive the real binary over HTTP and WebSockets, the same
-// way the page and the sandbox bridge do, so the wire protocol stays identical to the Node backend.
-// Run: cargo build --manifest-path server-rs/Cargo.toml && npx tsx --test tests/rust/parity.test.ts
+// Black-box tests for the backend (server-rs). They drive the real binary over HTTP and WebSockets, the same
+// way the page and the sandbox bridge do.
+// Run: cargo build --manifest-path server-rs/Cargo.toml && npx tsx --test tests/rust/wire.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -18,7 +18,7 @@ const origin = `http://127.0.0.1:${PORT}`;
 async function start(): Promise<{ proc: ChildProcess; dir: string }> {
   assert.ok(existsSync(BIN), `build the binary first: ${BIN}`);
   // A scratch working directory: never touch the real .runtime of a running DeviceDock.
-  const dir = mkdtempSync(join(tmpdir(), "dd-parity-"));
+  const dir = mkdtempSync(join(tmpdir(), "dd-wire-"));
   mkdirSync(join(dir, ".runtime"));
   writeFileSync(join(dir, ".runtime/bridge-token"), BRIDGE_TOKEN);
   mkdirSync(join(dir, "dist"));

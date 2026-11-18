@@ -15,35 +15,29 @@ die() { echo "error: $*" >&2; exit 1; }
 
 need_docker() { docker info >/dev/null 2>&1 || die "Docker is not reachable. Start it (e.g. 'colima start') and retry."; }
 
-# Backend: the self-contained Rust binary (web UI embedded, no Node needed) when there is one; it is built with cargo
-# if cargo is installed. DEVICEDOCK_BACKEND=node forces the original Node backend, DEVICEDOCK_BIN picks a binary.
+# Backend: the self-contained Rust binary (web UI embedded). DEVICEDOCK_BIN picks one; otherwise bin/devicedock (from a
+# release) or this checkout's build, which is made with cargo when there is none yet.
 find_bin() {
   local b; for b in "${DEVICEDOCK_BIN:-}" bin/devicedock server-rs/target/release/devicedock; do
     [ -n "$b" ] && [ -x "$b" ] && { echo "$b"; return; }; done; return 0
 }
-BIN=""
-if [ "${DEVICEDOCK_BACKEND:-auto}" != node ]; then
-  BIN=$(find_bin)
-  if [ -z "$BIN" ] && command -v cargo >/dev/null; then
-    say "Building the Rust backend (one time, about a minute)"
-    if [ ! -f dist/index.html ] && command -v npm >/dev/null; then [ -d node_modules ] || npm ci; npm run -s build; fi
-    cargo build --release --manifest-path server-rs/Cargo.toml && BIN=server-rs/target/release/devicedock
-  fi
-  [ -n "$BIN" ] || [ "${DEVICEDOCK_BACKEND:-auto}" = auto ] || die "no Rust backend binary; install cargo or put one in bin/devicedock"
+BIN=$(find_bin)
+if [ -z "$BIN" ] && command -v cargo >/dev/null; then
+  say "Building the backend (one time, about a minute)"
+  if [ ! -f dist/index.html ] && command -v npm >/dev/null; then [ -d node_modules ] || npm ci; npm run -s build; fi
+  cargo build --release --manifest-path server-rs/Cargo.toml && BIN=server-rs/target/release/devicedock
 fi
-[ -n "$BIN" ] || [ -d node_modules ] || { say "Installing dependencies"; npm ci; }
+[ -n "$BIN" ] || die "no backend binary: install a release (see README) or Rust (cargo) to build one"
+# Node is only for changing the web UI (and its tests); running DeviceDock never needs it.
 need_node() { command -v npm >/dev/null || die "this needs Node.js (only for developing the web UI)"; [ -d node_modules ] || npm ci; }
-ddctl() { if [ -n "$BIN" ]; then "$BIN" "$@"; else case "$1" in
-  sandbox) npm run -s "sandbox:$2" ;; open) npm run -s open ;; login-codex) npm run -s login:codex ;; esac; fi; }
+ddctl() { "$BIN" "$@"; }
 
 backend_pid() {
   # PID listening on our port, only if it is this project's backend.
   local pid; pid=$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)
-  [ -n "$pid" ] && ps -o command= -p "$pid" | grep -qE "apps/server/index.ts|devicedock serve" && echo "$pid" || true
+  [ -n "$pid" ] && ps -o command= -p "$pid" | grep -q "devicedock serve" && echo "$pid" || true
 }
-# Which backend a running pid is: the Node one (apps/server, which has no network firewall) or the Rust binary.
-backend_kind() { ps -o command= -p "$1" 2>/dev/null | grep -q "apps/server/index.ts" && echo "node, no firewall" || echo rust; }
-# Warning lines when the running Rust backend (pid $1) is out of date: a local build older than its sources, or a
+# Warning lines when the running backend (pid $1) is out of date: a local build older than its sources, or a
 # binary that was rebuilt or replaced (the installer does that) after the backend started.
 # $2 = console names the console commands in the hints; otherwise the one-shot forms.
 backend_stale() {
@@ -112,7 +106,7 @@ start_backend() {
   else
     [ -z "$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null || true)" ] || die "port $PORT is used by another program"
     say "Starting backend on 127.0.0.1:$PORT"
-    if [ -n "$BIN" ]; then nohup "$BIN" serve >"$LOG" 2>&1 & else nohup npm start >"$LOG" 2>&1 & fi
+    nohup "$BIN" serve >"$LOG" 2>&1 &
     echo $! >"$PIDFILE"
     for _ in $(seq 1 40); do
       curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break; sleep 0.5
@@ -133,7 +127,6 @@ cmd_restart_backend() {
 cmd_start() {
   need_docker
   docker image inspect $IMAGE >/dev/null 2>&1 || { say "Sandbox image missing"; cmd_pull || build_image; }
-  [ -n "$BIN" ] || [ -f dist/index.html ] || { say "Building frontend"; npm run -s build; }
   say "Starting sandbox container"; ddctl sandbox start
   end_stray_codex
   start_backend
@@ -152,7 +145,7 @@ cmd_stop() {
 
 cmd_status() {
   local pid; pid=$(backend_pid)
-  if [ -n "$pid" ]; then echo "backend : running ($(backend_kind "$pid"), pid $pid, http://127.0.0.1:$PORT)"; else echo "backend : stopped"; fi
+  if [ -n "$pid" ]; then echo "backend : running (pid $pid, http://127.0.0.1:$PORT)"; else echo "backend : stopped"; fi
   [ -z "$pid" ] || backend_stale "$pid" | sed 's/^/  /'
   if docker info >/dev/null 2>&1; then
     echo "docker  : ok"
@@ -181,7 +174,7 @@ cmd_login() {
 run_tests() {
   if command -v cargo >/dev/null; then cargo test --manifest-path server-rs/Cargo.toml || return 1; fi
   if command -v npm >/dev/null; then need_node; npm run -s typecheck && npm test || return 1
-    [ -x server-rs/target/release/devicedock ] && DEVICEDOCK_BIN=server-rs/target/release/devicedock npx tsx --test tests/rust/parity.test.ts; fi
+    [ -x server-rs/target/release/devicedock ] && DEVICEDOCK_BIN=server-rs/target/release/devicedock npx tsx --test tests/rust/wire.test.ts; fi
 }
 
 cmd_clean() {
@@ -192,7 +185,7 @@ cmd_clean() {
 
 # ---- interactive console: starts everything, shows status, takes restart commands ----
 web_state() {
-  [ -f dist/index.html ] || { [ -n "$BIN" ] && echo "embedded in the backend binary" || echo "not built"; return; }
+  [ -f dist/index.html ] || { echo "embedded in the backend binary"; return; }
   local newer; newer=$(find apps/web/src packages -newer dist/index.html -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \) 2>/dev/null | grep -v node_modules | head -1)
   [ -n "$newer" ] && echo "STALE (changed: $newer; use: w)" || echo "up to date"
 }
@@ -204,7 +197,7 @@ image_state() {
 console_status() {
   local pid; pid=$(backend_pid)
   printf '\n\033[1m── DeviceDock %s ──\033[0m\n' "$(date +%T)"
-  if [ -n "$pid" ]; then printf 'backend  : \033[32mrunning\033[0m (%s) pid %s  http://127.0.0.1:%s\n' "$(backend_kind "$pid")" "$pid" "$PORT"
+  if [ -n "$pid" ]; then printf 'backend  : \033[32mrunning\033[0m pid %s  http://127.0.0.1:%s\n' "$pid" "$PORT"
   else printf 'backend  : \033[31mstopped\033[0m\n'; fi
   [ -z "$pid" ] || backend_stale "$pid" console | while IFS= read -r l; do printf '  \033[33m%s\033[0m\n' "$l"; done
   echo "web build: $(web_state)"

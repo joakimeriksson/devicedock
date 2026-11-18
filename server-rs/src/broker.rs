@@ -1,4 +1,4 @@
-//! Port of apps/server/broker.ts: exclusive leases, per-operation approval, autonomous mode, probe and flash sessions.
+//! The broker: exclusive leases, per-operation approval, autonomous mode, probe and flash sessions.
 //! All state sits behind one mutex; operations that need the page wait on a oneshot channel outside it.
 use crate::protocol::*;
 use indexmap::IndexMap;
@@ -540,7 +540,7 @@ fn list_entry(d: &Device, now: i64) -> Value {
 
 #[cfg(test)]
 mod tests {
-    //! Ports of tests/unit/broker.test.ts and the broker half of tests/unit/probe.test.ts.
+    //! Leases, approvals, autonomy, and probe and flash sessions.
     use super::*;
     use std::sync::atomic::AtomicI64;
 
@@ -928,5 +928,88 @@ mod tests {
         f.b.end_probe("browser", &f.d.id);
         assert_eq!(f.last()["active"], false);
         assert!(f.b.run("bridge", Source::Agent, &xfer(&f)).await.unwrap_err().contains("No approved probe session"));
+    }
+
+    #[tokio::test]
+    async fn probe_sessions_can_be_denied_outlive_a_lease_and_end_on_close_idle_or_autonomy() {
+        let clock = Arc::new(AtomicI64::new(now_ms()));
+        let c = clock.clone();
+        // Long leases, so moving the clock ends the session, not the lease.
+        let b = Broker::with_clock(Box::new(move || c.load(Ordering::SeqCst)), 3_600_000);
+        let sent: Sent = Arc::default();
+        let d = desc("probe", false);
+        b.expose("browser", sink(&sent), d.clone()).unwrap();
+        // The page: approve or deny when asked, answer operations, echo DAP packets with 0x80 in front.
+        let allow = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let page = {
+            let (b, sent, allow) = (b.clone(), sent.clone(), allow.clone());
+            tokio::spawn(async move {
+                loop {
+                    let msgs: Vec<Value> = std::mem::take(&mut *sent.lock().unwrap());
+                    for m in msgs {
+                        let id = m["request"]["id"].as_str().unwrap_or_default().to_string();
+                        if m["type"] == "approval" {
+                            b.approve("browser", &id, allow.load(Ordering::SeqCst));
+                        } else if m["type"] == "operation" {
+                            let data = (m["request"]["op"] == "probe.transfer").then(|| {
+                                let mut out = vec![0x80];
+                                out.extend(decode_base64(m["request"]["args"]["data"].as_str().unwrap(), 4096).unwrap());
+                                encode_base64(&out)
+                            });
+                            b.reply("browser", &id, true, None, data);
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+        };
+        let at = |op: &str, lease: Option<&str>, args: Value| req(&d.id, op, lease, args, clock.load(Ordering::SeqCst) + 5000);
+        let run = |client: &str, op: &str, lease: Option<&str>, args: Value| {
+            let (b, client, r) = (b.clone(), client.to_string(), at(op, lease, args));
+            async move { b.run(&client, Source::Agent, &r).await }
+        };
+        let acquire = |client: &str| {
+            let a = run(client, "serial.acquire", None, json!({}));
+            async move { a.await.unwrap()["lease"].as_str().unwrap().to_string() }
+        };
+        let none = |r: R<Value>| assert!(r.unwrap_err().contains("No approved probe session"));
+
+        // Denied: nothing gets through.
+        allow.store(false, Ordering::SeqCst);
+        let lease = acquire("bridge").await;
+        assert!(run("bridge", "probe.open", Some(&lease), json!({})).await.unwrap_err().contains("denied"));
+        none(run("bridge", "probe.transfer", Some(&lease), json!({"data": "AA=="})).await);
+        run("bridge", "serial.release", Some(&lease), json!({})).await.unwrap();
+        allow.store(true, Ordering::SeqCst);
+
+        // The CLI opens the session under its lease; OpenOCD's bridge then uses it under another one.
+        let cli = acquire("cli").await;
+        assert_eq!(run("cli", "probe.open", Some(&cli), json!({})).await.unwrap(), json!({"session": "opened"}));
+        run("cli", "serial.release", Some(&cli), json!({})).await.unwrap();
+        let lease = acquire("bridge").await;
+        let r = run("bridge", "probe.transfer", Some(&lease), json!({"data": "AQ=="})).await.unwrap();
+        assert_eq!(decode_base64(r["data"].as_str().unwrap(), 4096).unwrap(), vec![0x80, 1]);
+        assert_eq!(run("bridge", "probe.open", Some(&lease), json!({})).await.unwrap(), json!({"session": "active"}));
+
+        // probe.close ends it.
+        run("bridge", "probe.close", Some(&lease), json!({})).await.unwrap();
+        none(run("bridge", "probe.transfer", Some(&lease), json!({"data": "AQ=="})).await);
+
+        // Keepalive reads hold the lease across a long idle stretch, but they do not extend the session.
+        run("bridge", "probe.open", Some(&lease), json!({})).await.unwrap();
+        let mut idle = 0;
+        while idle < PROBE_IDLE_MS + 1000 {
+            clock.fetch_add(20_000, Ordering::SeqCst);
+            idle += 20_000;
+            run("bridge", "serial.read", Some(&lease), json!({"maxBytes": 1})).await.unwrap();
+        }
+        none(run("bridge", "probe.transfer", Some(&lease), json!({"data": "AQ=="})).await);
+
+        // Autonomous mode opens a session without asking.
+        allow.store(false, Ordering::SeqCst);
+        b.set_autonomy("browser", &d.id, Some(clock.load(Ordering::SeqCst) + 60_000)).unwrap();
+        let r = run("bridge", "probe.transfer", Some(&lease), json!({"data": "Ag=="})).await.unwrap();
+        assert_eq!(decode_base64(r["data"].as_str().unwrap(), 4096).unwrap(), vec![0x80, 2]);
+        page.abort();
     }
 }

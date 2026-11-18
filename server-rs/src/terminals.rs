@@ -1,4 +1,4 @@
-//! Port of apps/server/terminals.ts: one `docker exec -it` PTY per kind, shared by every page that attaches,
+//! One `docker exec -it` PTY per kind, shared by every page that attaches,
 //! with the last 64 KiB of output replayed to a newcomer and a 30 s grace period after the last page leaves.
 use crate::sandbox::{verify_managed, CONTAINER};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};

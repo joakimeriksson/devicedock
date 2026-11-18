@@ -54,12 +54,11 @@ please open an issue with what worked and what did not.
 interactive console with live status and restart commands; see [QUICKSTART.md](QUICKSTART.md#2-start-everything).
 One-shot forms also work: `start|stop|restart|restart-backend|status|open|logs|login <agent>|pull|upgrade|build|test|clean`.
 
-## Rust backend (no Node on the host)
+## The backend
 
-`server-rs/` is the host backend rewritten in Rust: one ~13 MB binary with the web UI embedded, a drop-in replacement
-for `apps/server` (same HTTP, WebSocket and bridge protocol, same `.runtime/` files, same security rules).
-`./devicedock.sh` uses it automatically when it finds `bin/devicedock` or `server-rs/target/release/devicedock`, and
-builds it with cargo when Rust is installed. `DEVICEDOCK_BACKEND=node` switches back to the Node backend.
+`server-rs/` is the host backend, written in Rust: one ~13 MB binary with the web UI embedded, so running DeviceDock
+needs no Node. `./devicedock.sh` uses `bin/devicedock` (from a release) or `server-rs/target/release/devicedock`, and
+builds the latter with cargo when Rust is installed.
 
 ```sh
 devicedock serve                     # the backend (what ./devicedock.sh starts)
@@ -68,13 +67,12 @@ devicedock sandbox start|stop|clean  # the hardened sandbox container
 devicedock login-codex               # codex login with the OAuth callback relay
 ```
 
-Node is now only needed to *develop* the web UI (`npm run build`; the binary serves `./dist` when it exists, else its
-embedded copy). Tests: `cargo test --manifest-path server-rs/Cargo.toml` (broker and protocol), then
-`npx tsx --test tests/rust/parity.test.ts` (drives the real binary over the wire) and
+Node is only needed to *develop* the web UI (see "Developing the web UI" below). Tests: `cargo test --manifest-path server-rs/Cargo.toml` (broker and protocol), then
+`npx tsx --test tests/rust/wire.test.ts` (drives the real binary over the wire) and
 `node tests/rust/browser-smoke.mjs` (headless Chrome: login, share the mock, PING → PONG). CI
 (`.github/workflows/backend.yml`) builds macOS and static Linux binaries; a `v*` tag publishes them as a release.
 
-## Network firewall (Rust backend)
+## Network firewall
 
 The sandbox has **no network of its own** (`--network none`). Its one way out is `devicedock tunnel`, which the
 backend starts inside it with `docker exec` and talks to over that process's stdin/stdout:
@@ -103,13 +101,12 @@ shows the mode and how many sites are allowed, and turns amber for **Open** or a
 - **Measured** on a MacBook with Colima: about 19 MB/s through the tunnel (27 MB/s directly); the device link
   stays responsive during a download.
 - **Limits.** It filters by host name, not by content: an allowed host can still receive data. Tools that ignore the
-  proxy settings (Node's built-in `fetch`, `git@` SSH URLs, raw sockets) cannot reach the internet. Only the Rust
-  backend runs the firewall.
+  proxy settings (Node's built-in `fetch`, `git@` SSH URLs, raw sockets) cannot reach the internet.
 - **Older sandboxes.** The firewall needs an image with `devicedock tunnel` (label `devicedock.tunnel=1`). A sandbox
   created before, or from an older image, keeps its open network and published bridge port, and the panel says so;
   get a current image (console: `i` or `p`) and recreate the sandbox (`rs`).
 
-## Shared folders (Rust backend)
+## Shared folders
 
 **Settings → Shared folders** in the page puts folders from your computer into the sandbox, so agents can work on your
 existing projects. **Add a folder…** opens a folder browser that starts in your home folder (or type a path such as
@@ -130,24 +127,22 @@ recreates it. Files in `/workspace` and your agent logins are kept (they are vol
 - **Linux:** the sandbox user is UID 1000. If your files belong to another UID the folder may be read-only in
   practice. Docker Desktop and Colima on macOS map ownership for you.
 
-## Node backend (for web UI development)
+## Developing the web UI
 
-The original Node backend (`apps/server`) is kept for developing the web UI and as a fallback
-(`DEVICEDOCK_BACKEND=node ./devicedock.sh`). It needs Node 22.12+, npm, and Python plus a C toolchain for node-pty
-(macOS: `xcode-select --install`). Use `npm ci` (the lockfile is versioned):
+The page (`apps/web`, TypeScript and React) is built with Vite, so changing it needs Node 22.12+ and npm. Use `npm ci`
+(the lockfile is versioned):
 
 ```sh
-npm ci && npm run typecheck && npm run build && npm test
-npm run sandbox:build && npm run sandbox:start
-npm start            # backend; `npm run dev` restarts it on source changes
-npm run open         # in a second terminal: one-time login link
+npm ci && npm run typecheck && npm test
+npm run build        # writes ./dist; the backend serves ./dist when it exists, else its embedded copy
 ```
 
-Login links (from `./devicedock.sh` → `o`, `devicedock open` or `npm run open`) open `http://127.0.0.1:47831` with a
-one-time token in the fragment. It is removed immediately, exchanged for an HttpOnly SameSite=Strict session cookie,
-and never logged. Use this exact host, not `localhost`. Run `npm run build` after frontend changes; the backend serves
-the built UI from the same origin. `PORT` changes the browser port. The Node backend reaches the bridge on loopback
-port 47832, so it needs a sandbox with a published port (an older image); it does not run the firewall.
+Then reload the page (in the console: `w` rebuilds). `npm run test:browser` runs the Playwright test against its own
+backend on another port, so it never touches a running DeviceDock.
+
+Login links (from `./devicedock.sh` → `o` or `devicedock open`) open `http://127.0.0.1:47831` with a one-time token in
+the fragment. It is removed immediately, exchanged for an HttpOnly SameSite=Strict session cookie, and never logged.
+Use this exact host, not `localhost`. `PORT` changes the browser port.
 
 ## Verify the real container path
 
@@ -175,11 +170,11 @@ Credentials live only in the `devicedock-home` Docker volume. Nothing is copied 
 
 | Agent | Command (run on the Mac) | How it works |
 | --- | --- | --- |
-| Codex | `npm run login:codex` | Opt-in callback relay (below). Verify with `codex login status` in the sandbox shell. |
+| Codex | `./devicedock.sh login codex` | Opt-in callback relay (below). Verify with `codex login status` in the sandbox shell. |
 | Claude Code | `docker exec -it devicedock-sandbox claude auth login` | Hosted redirect: open the printed URL on the Mac, paste the code back. No relay needed. |
 | OpenCode | `docker exec -it devicedock-sandbox opencode auth login` | Provider login; behavior not yet verified here. API-key providers need no callback. |
 
-**Codex relay.** `npm run login:codex` binds Mac `127.0.0.1:1455` only for the duration of one container `codex login`, forwards only `GET /auth/callback` into the container, and never logs request contents. It exits if port 1455 is taken (for example by a Mac Codex login; it will not touch that process), when the login ends, or after 10 minutes. Forwarding was tested with a stand-in listener; a real OAuth round trip still needs a human to complete the browser login.
+**Codex relay.** `./devicedock.sh login codex` binds Mac `127.0.0.1:1455` only for the duration of one container `codex login`, forwards only `GET /auth/callback` into the container, and never logs request contents. It exits if port 1455 is taken (for example by a Mac Codex login; it will not touch that process), when the login ends, or after 10 minutes. Forwarding was tested with a stand-in listener; a real OAuth round trip still needs a human to complete the browser login.
 
 To log out: `docker exec devicedock-sandbox codex logout` / `claude auth logout`, or remove the `devicedock-home` volume.
 
@@ -242,7 +237,7 @@ Each CLI command acquires and releases its own exclusive lease. A monitor curren
 ## Architecture and boundaries
 
 ```text
-Browser adapter ↔ authenticated browser WebSocket ↔ Mac broker (Rust backend)
+Browser adapter ↔ authenticated browser WebSocket ↔ Mac broker
                                                       ↕ WebSocket, carried by `devicedock tunnel` (docker exec pipe)
                                          sandbox bridge service :47832 (inside the container)
                                                       ↕ authenticated HTTP
@@ -260,13 +255,13 @@ The device broker caps messages at 64 KiB, serial chunks at 16 KiB, the receive 
 
 ## Shutdown and credential removal
 
-Stop the Node backend with Ctrl-C, then:
+Stop the backend and the sandbox:
 
 ```sh
-npm run sandbox:stop
+./devicedock.sh stop
 ```
 
-Workspace and credentials persist. `npm run sandbox:clean` removes only the managed container, preserving both volumes. To log out:
+Workspace and credentials persist. `./devicedock.sh clean` removes only the managed container, preserving both volumes. To log out:
 
 ```sh
 docker exec -it devicedock-sandbox codex logout

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { connect, type AddressInfo } from "node:net";
-import { Broker, PROBE_IDLE_MS } from "../../apps/server/broker.ts";
+import { Broker } from "../fixtures/broker.ts";
 import {
   DapFramer, encodeDapFrame, startProbeServers, DAP_REQUEST, DAP_RESPONSE, DAP_SIGNATURE,
 } from "../../sandbox/bridge-service/probe.ts";
@@ -48,98 +48,7 @@ test("probes are physical, take no RFC 2217 port, and get their own OpenOCD port
   assert.equal(r("").success, false);
 });
 
-// ---------- broker: session approval ----------
-function probeFixture(autonomousUntil?: number) {
-  let t = 1_000_000;
-  const b = new Broker(() => t);
-  const sent: any[] = [];
-  const d = { id: randomUUID(), name: "XDS110", kind: "probe" as const, generation: 1, autoApprove: false, baudRate: 115200, ...(autonomousUntil ? { autonomousUntil: t + autonomousUntil } : {}) };
-  b.expose("browser", (m) => sent.push(m), d);
-  const req = (op: string, lease?: string, args: unknown = {}) => ({ v: 1, id: randomUUID(), deviceId: d.id, generation: 1, op, args, lease, deadline: t + 5000 });
-  // The page: answer operations, approve when asked (if `allow`), echo DAP packets with 0x80 in front.
-  const page = (allow: boolean) => {
-    const handle = () => {
-      for (const m of sent.splice(0)) {
-        if (m.type === "approval") b.approve("browser", m.request.id, allow);
-        if (m.type === "operation") {
-          const data = m.request.op === "probe.transfer"
-            ? Buffer.concat([Buffer.from([0x80]), Buffer.from(m.request.args.data, "base64")]).toString("base64") : undefined;
-          b.reply("browser", m.request.id, true, undefined, data);
-        }
-      }
-    };
-    const timer = setInterval(handle, 1);
-    return () => clearInterval(timer);
-  };
-  return { b, d, sent, req, page, advance: (ms: number) => (t += ms) };
-}
-test("probe transfers need an approved session; one approval covers many packets", async () => {
-  const { b, sent, req, page } = probeFixture();
-  const stop = page(true);
-  try {
-    const { lease } = (await b.run("bridge", "agent", req("serial.acquire"))) as any;
-    await assert.rejects(b.run("bridge", "agent", req("probe.transfer", lease, { data: "AA==" })), /No approved probe session/);
-    assert.deepEqual(await b.run("bridge", "agent", req("probe.open", lease)), { session: "opened" });
-    for (let i = 0; i < 20; i++) {
-      const r = (await b.run("bridge", "agent", req("probe.transfer", lease, { data: Buffer.from([i]).toString("base64") }))) as any;
-      assert.deepEqual([...Buffer.from(r.data, "base64")], [0x80, i]);
-    }
-    assert.deepEqual(await b.run("bridge", "agent", req("probe.open", lease)), { session: "active" });
-  } finally {
-    stop();
-  }
-  void sent;
-});
-test("a denied session lets nothing through", async () => {
-  const { b, req, page } = probeFixture();
-  const stop = page(false);
-  try {
-    const { lease } = (await b.run("bridge", "agent", req("serial.acquire"))) as any;
-    await assert.rejects(b.run("bridge", "agent", req("probe.open", lease)), /denied/);
-    await assert.rejects(b.run("bridge", "agent", req("probe.transfer", lease, { data: "AA==" })), /No approved probe session/);
-  } finally {
-    stop();
-  }
-});
-test("the session outlives a lease (CLI opens, OpenOCD uses) but ends on cut-off, close and idle time", async () => {
-  const { b, d, req, page, advance } = probeFixture();
-  const stop = page(true);
-  try {
-    let { lease } = (await b.run("cli", "agent", req("serial.acquire"))) as any;
-    await b.run("cli", "agent", req("probe.open", lease));
-    await b.run("cli", "agent", req("serial.release", lease));
-    ({ lease } = (await b.run("bridge", "agent", req("serial.acquire"))) as any);
-    await b.run("bridge", "agent", req("probe.transfer", lease, { data: "AQ==" }));
-    b.endProbe("browser", d.id); // the owner's "Cut off"
-    await assert.rejects(b.run("bridge", "agent", req("probe.transfer", lease, { data: "AQ==" })), /No approved probe session/);
-    await b.run("bridge", "agent", req("probe.open", lease));
-    await b.run("bridge", "agent", req("probe.close", lease));
-    await assert.rejects(b.run("bridge", "agent", req("probe.transfer", lease, { data: "AQ==" })), /No approved probe session/);
-    await b.run("bridge", "agent", req("probe.open", lease));
-    // The bridge's keepalive reads hold the lease across a long idle stretch, but they do not extend the session.
-    for (let idle = 0; idle < PROBE_IDLE_MS + 1000; idle += 20000) {
-      advance(20000);
-      await b.run("bridge", "agent", req("serial.read", lease, { maxBytes: 1 }));
-    }
-    await assert.rejects(b.run("bridge", "agent", req("probe.transfer", lease, { data: "AQ==" })), /No approved probe session/);
-  } finally {
-    stop();
-  }
-});
-test("autonomous mode opens a probe session without asking; serial ops on a probe are refused", async () => {
-  const { b, sent, req } = probeFixture(15 * 60000);
-  const { lease } = (await b.run("bridge", "agent", req("serial.acquire"))) as any;
-  const p = b.run("bridge", "agent", req("probe.transfer", lease, { data: "AA==" }));
-  const msgs = sent.splice(0);
-  assert.deepEqual(msgs.map((m) => m.type), ["probe-session", "operation"]);
-  b.reply("browser", msgs[1].request.id, true, undefined, "gA==");
-  assert.deepEqual(await p, { data: "gA==" });
-  await assert.rejects(b.run("bridge", "agent", req("serial.write", lease, { data: "AA==" })), /no serial port/);
-});
-test("a probe can never be exposed with autoApprove", () => {
-  const b = new Broker();
-  assert.throws(() => b.expose("o", () => {}, { id: randomUUID(), name: "p", kind: "probe", generation: 1, autoApprove: true, baudRate: 115200 }), /approval/);
-});
+// The broker's probe-session rules are tested in server-rs/src/broker.rs.
 
 // ---------- bridge endpoint, end to end with a fake bridge API ----------
 test("OpenOCD endpoint: acquires, opens the session, relays packets in order, releases on close", async () => {

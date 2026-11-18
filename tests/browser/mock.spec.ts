@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 test("browser mock: expose, PING/PONG, binary, revoke, unplug, reconnect", async ({
   page,
 }) => {
-  await page.goto((await readFile(".runtime/session-link", "utf8")).trim());
+  await page.goto((await readFile("test-results/backend/.runtime/session-link", "utf8")).trim());
   await expect(page.getByText("Browser bridge online")).toBeVisible();
   await page.getByRole("button", { name: "Add mock", exact: true }).click();
   await expect(page.getByText("Private", { exact: true })).toBeVisible();

@@ -7,7 +7,7 @@ parts are verified, and marks proposals as proposals.
 ## 1. The layers
 
 ```
- Linux sandbox (Docker)                 Mac backend (Node, 127.0.0.1)            Browser (Chrome/Edge)
+ Linux sandbox (Docker)                 Mac backend (Rust, 127.0.0.1)            Browser (Chrome/Edge)
  ──────────────────────                 ───────────────────────────             ─────────────────────
  agents: Codex / Claude / OpenCode      Broker: leases, generations,             DeviceAdapter  ◄── the seam
    │  esptool, pyserial, PlatformIO       approvals, "autonomous" windows          ├─ WebSerialAdapter  (real port)
@@ -30,7 +30,7 @@ Nothing in the broker, bridge, CLI, MCP server or RFC 2217 server knows how a de
 | add a **new real transport** (WebUSB, WebHID, Bluetooth serial) | `DeviceAdapter` (`apps/web/src/adapters.ts`) | one adapter; kind stays `serial` (physical) |
 | add another **debug-probe transport** | `ProbeAdapter` (`apps/web/src/probe.ts`) | kind `probe` (physical); see 4.1 |
 | add a **simulator that cannot run in the browser** (QEMU, Renode, a native emulator) | a *device provider* (section 6, **not built**) | bridge service / backend |
-| change what agents can do | `packages/protocol` operations, `apps/server/broker.ts` | protocol, broker, SDK |
+| change what agents can do | `packages/protocol` and `server-rs/src/protocol.rs` operations, `server-rs/src/broker.rs` | protocol, broker, SDK |
 
 ### 2.1 `DeviceAdapter` (browser): a byte stream plus modem lines
 `listGranted`, `requestDevice`, `open`, `close`, `write`, `setSignals`, `subscribe`. The page drives every
@@ -131,7 +131,7 @@ tell them apart), the share is revoked as before.
 3. Add its board(s) to a profile and an installer under `tools/sim/` (keep binaries out of git).
 4. Test the engine's pure parts (frame conversion, protocol parsing) like `rgb565ToRgba`; the adapter needs no
    new tests.
-5. Check the CSP (`apps/server/app.ts`): WebAssembly needs `'wasm-unsafe-eval'` (already allowed, together with
+5. Check the CSP (`server-rs/src/app.rs`): WebAssembly needs `'wasm-unsafe-eval'` (already allowed, together with
    `worker-src 'self'`); an engine needing more (network, `eval`) is a security decision, not a detail.
 
 ## 6. Simulators that do not run in the browser (proposal, not built)

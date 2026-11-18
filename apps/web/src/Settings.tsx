@@ -39,7 +39,7 @@ function AgentUpdatesPanel({ csrf }: { csrf: string }) {
   const [error, setError] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
-  if (!view) return null; // the Node backend has no such setting
+  if (!view) return null; // until the first answer
   const choose = (on: boolean) =>
     postJson<AgentUpdates>("/api/agent-updates", { on }, csrf).then(
       (v) => (setError(""), setView(v)),
@@ -110,7 +110,7 @@ function AgentUpdatesPanel({ csrf }: { csrf: string }) {
 
 function About({ health, firewall }: { health: Health | undefined; firewall: FirewallView | null }) {
   const rows: [string, string][] = [
-    ["DeviceDock", health?.version ? `${health.version}, Rust backend` : "Node backend: no firewall or shared folders"],
+    ["DeviceDock", health?.version ?? "unknown"],
     ["Docker", health?.docker ? "available" : "unavailable"],
     ["Sandbox", health?.container ? (firewall?.state === "open" ? "running, older image without the firewall" : "running") : "not running"],
     ["Agents", health?.agent ? "Codex, Claude Code, OpenCode" : "not available"],
