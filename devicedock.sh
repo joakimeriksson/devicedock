@@ -173,8 +173,7 @@ cmd_login() {
 
 run_tests() {
   if command -v cargo >/dev/null; then cargo test --manifest-path server-rs/Cargo.toml || return 1; fi
-  if command -v npm >/dev/null; then need_node; npm run -s typecheck && npm test || return 1
-    [ -x server-rs/target/release/devicedock ] && DEVICEDOCK_BIN=server-rs/target/release/devicedock npx tsx --test tests/rust/wire.test.ts; fi
+  if command -v npm >/dev/null; then need_node; npm run -s typecheck && npm test || return 1; fi
 }
 
 cmd_clean() {

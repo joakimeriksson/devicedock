@@ -11,7 +11,7 @@ You need Docker, Chrome or Edge, [Rust](https://rustup.rs) (stable) and Node.js 
 
 ```sh
 git clone https://github.com/joakimeriksson/devicedock && cd devicedock
-npm ci                 # the web UI's build tools and the TypeScript tests
+npm ci                 # the web UI's build tools and its TypeScript tests
 ./devicedock.sh        # builds the Rust backend, downloads a sandbox image, starts everything
 ```
 
@@ -22,11 +22,11 @@ a Rust change, and `i` builds the sandbox image from `sandbox/Dockerfile` (`DEVI
 
 | Path | What |
 | --- | --- |
-| `server-rs/` | The host backend in Rust: web server, device broker, terminals, sandbox lifecycle, firewall, tunnel, shared folders |
+| `server-rs/` | DeviceDock in Rust. On the host: web server, device broker, terminals, sandbox lifecycle, firewall, shared folders. In the sandbox: the bridge service (RFC 2217 and OpenOCD endpoints), the `device` CLI, the MCP server, the tunnel |
 | `apps/web/` | The page (React, xterm.js): device sharing, terminals, Network and Shared folders panels |
-| `packages/` | Protocol types, the `device` CLI and SDK, the MCP server (these run inside the sandbox) |
-| `sandbox/` | The sandbox image (`Dockerfile`, variants base/contiki/esp32/full), the bridge service, `AGENTS.md` for agents |
-| `tests/` | TypeScript unit tests (web UI, sandbox-side clients), wire tests against the Rust binary, browser tests |
+| `packages/` | Protocol types for the page (`server-rs/src/protocol.rs` is the Rust side; keep them in step) |
+| `sandbox/` | The sandbox image (`Dockerfile`, variants base/contiki/esp32/full), helper scripts, `AGENTS.md` for agents |
+| `tests/` | TypeScript unit tests of the web UI, browser tests, the pyserial RFC 2217 suite (`tests/rfc2217/run.sh`). The Rust tests, including black-box tests of the binary, are in `server-rs/` |
 | `docs/` | The project web page (GitHub Pages) |
 
 [ARCHITECTURE.md](ARCHITECTURE.md) explains the layers and how to add a new kind of device or simulator.
@@ -34,7 +34,8 @@ a Rust change, and `i` builds the sandbox image from `sandbox/Dockerfile` (`DEVI
 ## Test before you send
 
 ```sh
-./devicedock.sh test        # cargo test, typecheck, TypeScript tests, and the wire tests against the binary
+./devicedock.sh test        # cargo test (with the black-box tests of the binary), typecheck, TypeScript tests
+IMAGE=devicedock-sandbox:local tests/rfc2217/run.sh   # real pyserial against the bridge, after changing it
 cargo clippy --manifest-path server-rs/Cargo.toml --all-targets
 ```
 

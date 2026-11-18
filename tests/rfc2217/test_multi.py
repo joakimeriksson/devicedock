@@ -10,6 +10,6 @@ real.close(); sim.close()
 try:
     serial.serial_for_url("rfc2217://127.0.0.1:2219", baudrate=115200, timeout=3)
     raise SystemExit("port 2219 must not serve a device")
-except serial.SerialException:
+except (serial.SerialException, OSError):  # the server closes the connection; pyserial reports either, depending on timing
     pass
 print("MULTI OK")

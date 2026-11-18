@@ -6,9 +6,9 @@ name: sandbox-image
 on:
   push:
     branches: [main]
-    paths: [sandbox/**, server-rs/**, packages/**, package.json, package-lock.json, .github/workflows/sandbox-image.yml]
+    paths: [sandbox/**, server-rs/**, .github/workflows/sandbox-image.yml]
   pull_request:
-    paths: [sandbox/**, server-rs/**, packages/**, package.json, package-lock.json, .github/workflows/sandbox-image.yml]
+    paths: [sandbox/**, server-rs/**, .github/workflows/sandbox-image.yml]
   workflow_dispatch:
 
 permissions:

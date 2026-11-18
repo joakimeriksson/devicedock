@@ -15,7 +15,6 @@
   "include": [
     "apps",
     "packages",
-    "sandbox",
     "scripts",
     "tests",
     "playwright.config.ts"

@@ -1,5 +1,9 @@
 # Implementation plan: Browser USB Bridge for Coding Agents
 
+> Original plan, kept as a record. The Node backend and the sandbox-side TypeScript it describes (`apps/server`,
+> `packages/device-client`, `packages/mcp-server`, `sandbox/bridge-service`) have since been replaced by the Rust
+> binary in `server-rs/`; see README.md and ARCHITECTURE.md.
+
 ## Owner decision — autonomous hardware loop (2026-11-06)
 
 The owner explicitly chose an RFC 2217 serial server plus a time-boxed **autonomous mode** over the

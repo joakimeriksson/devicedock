@@ -579,17 +579,18 @@ async fn bridge_once(app: &Shared) -> Result<(), String> {
             .await
             .map_err(timeout)?
             .map_err(|e| e.to_string())?;
-        bridge_session(app, ws).await
+        bridge_session(&app.broker, &app.shutdown, ws).await
     } else {
         let (ws, _) = tokio::time::timeout(Duration::from_secs(5), tokio_tungstenite::connect_async_with_config(req, Some(cfg), false))
             .await
             .map_err(timeout)?
             .map_err(|e| e.to_string())?;
-        bridge_session(app, ws).await
+        bridge_session(&app.broker, &app.shutdown, ws).await
     }
 }
 
-async fn bridge_session<S>(app: &Shared, ws: tokio_tungstenite::WebSocketStream<S>) -> Result<(), String>
+/// Runs the agents' requests that arrive on the bridge WebSocket through the broker, until it closes or `shutdown`.
+pub async fn bridge_session<S>(broker: &Arc<Broker>, shutdown: &Notify, ws: tokio_tungstenite::WebSocketStream<S>) -> Result<(), String>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -611,9 +612,9 @@ where
                 Some(Ok(tungstenite::Message::Close(_))) | None | Some(Err(_)) => break,
                 Some(Ok(_)) => continue,
             },
-            _ = app.shutdown.notified() => break,
+            _ = shutdown.notified() => break,
         };
-        let (app, tx, clients) = (app.clone(), tx.clone(), clients.clone());
+        let (broker, tx, clients) = (broker.clone(), tx.clone(), clients.clone());
         tokio::spawn(async move {
             let mut rid = String::new();
             let r: Result<Value, String> = async {
@@ -631,7 +632,7 @@ where
                     }
                     c.insert(client.to_string());
                 }
-                app.broker.run(client, Source::Agent, &request).await
+                broker.run(client, Source::Agent, &request).await
             }
             .await;
             let out = match r {
@@ -643,7 +644,7 @@ where
         });
     }
     for c in clients.lock().unwrap().drain() {
-        app.broker.disconnect_client(&c);
+        broker.disconnect_client(&c);
     }
     writer.abort();
     Ok(())

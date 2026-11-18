@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2021"
 publish = false
 license = "BSD-3-Clause"
-description = "DeviceDock host backend: one self-contained binary (web UI embedded), no Node needed"
+description = "DeviceDock in one binary: the host backend (web UI embedded) and, inside the sandbox, the bridge service, device CLI and MCP server"
 
 [[bin]]
 name = "devicedock"
@@ -26,6 +26,7 @@ rust-embed = { version = "8", features = ["include-exclude", "interpolate-folder
 mime_guess = "2"
 portable-pty = "0.9"
 subtle = "2"
+sha2 = "0.11"
 
 [profile.release]
 opt-level = 3

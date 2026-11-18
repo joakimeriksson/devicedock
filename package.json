@@ -12,12 +12,9 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/unit/*.test.ts",
     "test:browser": "playwright test",
-    "sandbox:build": "docker build --target ${DEVICEDOCK_VARIANT:-contiki} -t devicedock-sandbox:local -f sandbox/Dockerfile .",
-    "device": "tsx packages/device-client/cli.ts",
-    "mcp": "tsx packages/mcp-server/index.ts"
+    "sandbox:build": "docker build --target ${DEVICEDOCK_VARIANT:-contiki} -t devicedock-sandbox:local -f sandbox/Dockerfile ."
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-unicode11": "^0.9.0",
@@ -26,7 +23,6 @@
     "@xterm/xterm": "^6.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "ws": "^8.18.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
@@ -35,7 +31,6 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@types/w3c-web-serial": "^1.0.8",
-    "@types/ws": "^8.18.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vite": "^7.2.0"

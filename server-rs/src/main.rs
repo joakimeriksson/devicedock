@@ -1,15 +1,25 @@
-//! DeviceDock host backend in one binary. Subcommands:
+//! DeviceDock in one binary. On the host:
 //!   serve (default)            the loopback web server + broker
 //!   open                       mint a fresh one-time login link and open it in Chrome
 //!   sandbox start|stop|clean   manage the hardened sandbox container
 //!   login-codex                run `codex login` in the sandbox with the OAuth callback relay
-//!   tunnel                     inside the sandbox only: its network path to the backend (see tunnel.rs)
+//! Inside the sandbox only:
+//!   tunnel                     its network path to the backend (see tunnel.rs)
+//!   bridge                     the bridge service, RFC 2217 and OpenOCD endpoints: the container's main process
+//!   device <cmd> ...           the `device` CLI (/usr/local/bin/device runs this)
+//!   mcp                        the stdio MCP server with the device tools
 //! Files live in ./.runtime and ./dist relative to the working directory.
 mod app;
+mod bridge;
 mod broker;
+mod dap;
+mod device;
 mod firewall;
+mod instructions;
+mod mcp;
 mod protocol;
 mod relay;
+mod rfc2217;
 mod sandbox;
 mod shares;
 mod terminals;
@@ -24,6 +34,9 @@ fn port() -> u16 {
 #[tokio::main]
 async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "device") {
+        return ExitCode::from(device::main(&args[1..]).await);
+    }
     if matches!(args.first().map(String::as_str), None | Some("serve" | "sandbox")) {
         sandbox::remember_agent_updates();
     }
@@ -39,11 +52,15 @@ async fn main() -> ExitCode {
             .map(|_| println!("Container removed. Volumes preserved. See README for explicit data removal.")),
         ["login-codex"] => relay::login_codex().await,
         ["tunnel"] => tunnel::run_in_sandbox().await,
+        ["bridge"] => bridge::run().await,
+        ["mcp"] => mcp::run().await,
         ["--version"] | ["version"] => {
             println!("devicedock {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        _ => Err("usage: devicedock [serve | open | sandbox start|stop|clean | login-codex | --version]".into()),
+        _ => Err("usage: devicedock [serve | open | sandbox start|stop|clean | login-codex | --version]\n\
+                  in the sandbox: devicedock [bridge | device <command> ... | mcp]"
+            .into()),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,
@@ -84,7 +101,10 @@ async fn serve() -> Result<(), String> {
     println!("DeviceDock listening on {}. Run ./devicedock.sh open to authenticate in your browser.", app.origin);
     if !test {
         app::spawn_bridge(app.clone());
-        tokio::spawn(app.firewall.clone().run_tunnel());
+        // A backend pointed at a test bridge (DEVICEDOCK_BRIDGE_PORT) never runs the tunnel into the real sandbox.
+        if std::env::var_os("DEVICEDOCK_BRIDGE_PORT").is_none() {
+            tokio::spawn(app.firewall.clone().run_tunnel());
+        }
     }
     let router = axum::Router::new().fallback(app::handle).with_state(app.clone());
     let shutdown = {

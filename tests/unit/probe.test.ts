@@ -1,39 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { connect, type AddressInfo } from "node:net";
-import { Broker } from "../fixtures/broker.ts";
-import {
-  DapFramer, encodeDapFrame, startProbeServers, DAP_REQUEST, DAP_RESPONSE, DAP_SIGNATURE,
-} from "../../sandbox/bridge-service/probe.ts";
 import { findDapInterface, padReport } from "../../apps/web/src/probe.ts";
 import { request, orderDevices, orderProbes, openocdConfig, isPhysical } from "../../packages/protocol/index.ts";
-
-// ---------- framing (OpenOCD cmsis_dap_tcp) ----------
-test("DAP frames: header layout matches OpenOCD's cmsis_dap_tcp", () => {
-  const f = encodeDapFrame(Buffer.from([0x00, 0xfe]), DAP_REQUEST);
-  assert.deepEqual([...f.subarray(0, 8)], [0x44, 0x41, 0x50, 0x00, 2, 0, DAP_REQUEST, 0]);
-  assert.equal(f.readUInt32LE(0), DAP_SIGNATURE);
-  assert.deepEqual([...encodeDapFrame(Buffer.from([1]))].slice(6, 7), [DAP_RESPONSE]);
-});
-test("DAP framer reassembles split and merged frames", () => {
-  const a = encodeDapFrame(Buffer.from([1, 2, 3]), DAP_REQUEST), b = encodeDapFrame(Buffer.from([9]), DAP_REQUEST);
-  const all = Buffer.concat([a, b]);
-  const fr = new DapFramer();
-  const got: number[][] = [];
-  for (let i = 0; i < all.length; i++) got.push(...fr.push(all.subarray(i, i + 1)).map((p) => [...p])); // byte by byte
-  assert.deepEqual(got, [[1, 2, 3], [9]]);
-  assert.deepEqual(new DapFramer().push(all).map((p) => [...p]), [[1, 2, 3], [9]]); // both in one chunk
-});
-test("DAP framer rejects a bad signature, a response frame and an oversized length", () => {
-  assert.throws(() => new DapFramer().push(Buffer.from("GET / HTTP/1.1\r\n")), /signature/);
-  assert.throws(() => new DapFramer().push(encodeDapFrame(Buffer.from([1]), DAP_RESPONSE)), /type/);
-  const big = Buffer.alloc(8);
-  big.writeUInt32LE(DAP_SIGNATURE, 0);
-  big.writeUInt16LE(2000, 4);
-  big[6] = DAP_REQUEST;
-  assert.throws(() => new DapFramer().push(big), /out of range/);
-});
 
 // ---------- protocol ----------
 test("probes are physical, take no RFC 2217 port, and get their own OpenOCD port", () => {
@@ -48,50 +17,8 @@ test("probes are physical, take no RFC 2217 port, and get their own OpenOCD port
   assert.equal(r("").success, false);
 });
 
-// The broker's probe-session rules are tested in server-rs/src/broker.rs.
-
-// ---------- bridge endpoint, end to end with a fake bridge API ----------
-test("OpenOCD endpoint: acquires, opens the session, relays packets in order, releases on close", async () => {
-  const calls: string[] = [];
-  const probe = { id: randomUUID(), generation: 1, name: "XDS110", kind: "probe", baudRate: 115200 };
-  const api = {
-    list: async () => [{ ...probe, id: randomUUID(), kind: "serial" }, probe],
-    call: async (op: string, _d?: unknown, args?: Record<string, unknown>) => {
-      calls.push(op);
-      if (op === "serial.acquire") return { lease: randomUUID() };
-      if (op === "probe.transfer") {
-        const pkt = Buffer.from(args!.data as string, "base64");
-        await new Promise((r) => setTimeout(r, pkt[0] === 1 ? 20 : 0)); // the first is slower: order must hold
-        return { data: Buffer.from([pkt[0], 0xaa]).toString("base64") };
-      }
-      return {};
-    },
-  };
-  const [server] = startProbeServers(api, 0, "127.0.0.1", () => {}, 1);
-  await new Promise((r) => server.once("listening", r));
-  const port = (server.address() as AddressInfo).port;
-  const sock = connect(port, "127.0.0.1");
-  const replies: number[][] = [];
-  let buf = Buffer.alloc(0);
-  sock.on("data", (d) => {
-    buf = Buffer.concat([buf, d]);
-    while (buf.length >= 8 && buf.length >= 8 + buf.readUInt16LE(4)) {
-      assert.equal(buf[6], DAP_RESPONSE);
-      const n = buf.readUInt16LE(4);
-      replies.push([...buf.subarray(8, 8 + n)]);
-      buf = buf.subarray(8 + n);
-    }
-  });
-  await new Promise((r) => sock.once("connect", r));
-  sock.write(Buffer.concat([1, 2, 3].map((i) => encodeDapFrame(Buffer.from([i]), DAP_REQUEST))));
-  for (let i = 0; i < 100 && replies.length < 3; i++) await new Promise((r) => setTimeout(r, 10));
-  assert.deepEqual(replies, [[1, 0xaa], [2, 0xaa], [3, 0xaa]]);
-  sock.destroy();
-  for (let i = 0; i < 100 && !calls.includes("serial.release"); i++) await new Promise((r) => setTimeout(r, 10));
-  server.close();
-  assert.deepEqual(calls.slice(0, 2), ["serial.acquire", "probe.open"]);
-  assert.equal(calls.at(-1), "serial.release");
-});
+// The broker's probe-session rules are tested in server-rs/src/broker.rs; the OpenOCD endpoint and its framing in
+// server-rs/src/dap.rs.
 
 // ---------- browser adapter pure parts ----------
 test("findDapInterface prefers the named CMSIS-DAP vendor interface, else the first bulk pair", () => {
