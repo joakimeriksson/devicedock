@@ -1,4 +1,3 @@
-node_modules/
 # an old build of the page (before apps/web needed none); nothing uses it now
 dist/
 .runtime/

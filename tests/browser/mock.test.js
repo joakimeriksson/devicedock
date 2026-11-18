@@ -1,7 +1,7 @@
 // The page in headless Chrome against its own backend (port 47941, scratch directory, DEVICEDOCK_TEST=1): log in,
 // share the browser mock, PING -> PONG, binary bytes, revoke, unplug and share again.
 //   deno test --allow-all tests/browser/            (DEVICEDOCK_BIN=path/to/devicedock tests that binary instead)
-import assert from "node:assert/strict";
+import assert from "../assert.js";
 import { click, count, fill, launchChrome, openPage, startBackend, waitForNone, waitForText } from "./browser.js";
 
 Deno.test({

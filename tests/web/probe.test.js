@@ -1,5 +1,5 @@
 // The page's side of debug probes: finding the CMSIS-DAP interface (WebUSB) and padding HID reports (WebHID).
-import assert from "node:assert/strict";
+import assert from "../assert.js";
 import { findDapInterface, padReport } from "../../apps/web/src/probe.js";
 
 Deno.test("findDapInterface prefers the named CMSIS-DAP vendor interface, else the first bulk pair", () => {

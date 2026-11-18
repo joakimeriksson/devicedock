@@ -2,7 +2,7 @@
 // home folder: browse, refuse the home folder and hidden folders, share, read-only, remove. It never clicks "Restart
 // sandbox", so a running DeviceDock sandbox is not touched.
 //   deno test --allow-all tests/browser/
-import assert from "node:assert/strict";
+import assert from "../assert.js";
 import { click, count, fill, launchChrome, openPage, startBackend, waitFor, waitForText } from "./browser.js";
 
 Deno.test({

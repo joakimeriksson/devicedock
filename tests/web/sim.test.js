@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert from "../assert.js";
 import { SimAdapter } from "../../apps/web/src/sim/SimAdapter.js";
 import { registerEngine, loadProfiles } from "../../apps/web/src/sim/registry.js";
 import { rgb565ToRgba, stubSpec, toHex, fromHex } from "../../apps/web/src/sim/engines/esp32sim.js";

@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert from "../assert.js";
 import { chunkInput } from "../../apps/web/src/terminalInput.js";
 
 Deno.test("short input is sent as one piece", () => {
